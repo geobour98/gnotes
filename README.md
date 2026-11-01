@@ -56,7 +56,8 @@ cross-compiled.
 
 ## Shortcuts
 
-Ctrl+N new note · Ctrl+E cycle edit/split/preview · Ctrl+S save now · Ctrl+L lock
+Ctrl+N new note · Ctrl+E cycle edit/split/preview · Ctrl+S save now ·
+Ctrl+Shift+S toggle scroll sync (split view) · Ctrl+L lock
 
 ## Roadmap
 

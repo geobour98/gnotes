@@ -9,7 +9,16 @@
   import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
   import { tags as t } from "@lezer/highlight";
 
-  let { doc, onchange }: { doc: string; onchange: (text: string) => void } = $props();
+  let {
+    doc,
+    onchange,
+    onscrollline,
+  }: {
+    doc: string;
+    onchange: (text: string) => void;
+    /** Fired on scroll with the 0-based (fractional) line at the top. */
+    onscrollline?: (line: number) => void;
+  } = $props();
 
   let host: HTMLDivElement;
   let view: EditorView | undefined;
@@ -47,6 +56,30 @@
     "&.cm-focused": { outline: "none" },
   });
 
+  /** Position of document top inside the scroll content (i.e. padding). */
+  function docOffset(v: EditorView): number {
+    return v.documentTop - v.scrollDOM.getBoundingClientRect().top + v.scrollDOM.scrollTop;
+  }
+
+  /** Fractional 0-based line at the top of the viewport. */
+  export function topLine(): number {
+    if (!view) return 0;
+    const h = view.scrollDOM.scrollTop - docOffset(view);
+    const block = view.lineBlockAtHeight(Math.max(0, h));
+    const line = view.state.doc.lineAt(block.from).number - 1;
+    const frac = block.height > 0 ? (h - block.top) / block.height : 0;
+    return line + Math.min(Math.max(frac, 0), 1);
+  }
+
+  /** Scrolls so the given fractional 0-based line is at the top. */
+  export function scrollToLine(line: number) {
+    if (!view) return;
+    const text = view.state.doc;
+    const n = Math.min(Math.max(Math.floor(line), 0), text.lines - 1);
+    const block = view.lineBlockAt(text.line(n + 1).from);
+    view.scrollDOM.scrollTop = docOffset(view) + block.top + (line - n) * block.height;
+  }
+
   onMount(() => {
     view = new EditorView({
       parent: host,
@@ -66,6 +99,7 @@
         ],
       }),
     });
+    view.scrollDOM.addEventListener("scroll", () => onscrollline?.(topLine()), { passive: true });
     view.focus();
   });
 

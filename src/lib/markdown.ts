@@ -20,7 +20,8 @@ const md = new MarkdownIt({
     const html = language
       ? hljs.highlight(code, { language, ignoreIllegals: true }).value
       : escapeHtml(code);
-    return `<pre class="hljs"><code>${html}</code></pre>`;
+    // markdown-it wraps this in <pre><code ...>, keeping our data-line attr.
+    return html;
   },
 });
 
@@ -39,6 +40,16 @@ md.core.ruler.after("inline", "task-lists", (state) => {
     box.content = `<input type="checkbox" disabled${m[1] === " " ? "" : " checked"}> `;
     inline.children!.unshift(box);
     tokens[i - 2].attrJoin("class", "task-item");
+  }
+});
+
+// Tag every block with its source line (0-based) so the editor and preview
+// can scroll in sync, the same technique VS Code uses.
+md.core.ruler.push("source-lines", (state) => {
+  for (const token of state.tokens) {
+    if (token.map && token.block && token.nesting !== -1) {
+      token.attrSet("data-line", String(token.map[0]));
+    }
   }
 });
 
@@ -64,6 +75,7 @@ const PURIFY = {
   FORBID_TAGS: ["style", "form", "button", "textarea", "select", "iframe", "object", "embed"],
   FORBID_ATTR: ["style", "srcset"],
   ALLOW_DATA_ATTR: false,
+  ADD_ATTR: ["data-line"],
 };
 
 export function render(source: string): string {

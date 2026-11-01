@@ -18,6 +18,9 @@
   let selectedFolder = $state("");
   let saveState = $state<"saved" | "dirty" | "saving" | "error">("saved");
   let mode = $state<Mode>(loadMode());
+  let syncScroll = $state(loadFlag("gnotes.syncScroll", true));
+  let editorRef = $state<ReturnType<typeof Editor>>();
+  let previewRef = $state<ReturnType<typeof Preview>>();
   let toast = $state("");
 
   // Latest editor text; kept outside $state so typing doesn't re-render the page.
@@ -41,6 +44,42 @@
     try {
       localStorage.setItem("gnotes.mode", m);
     } catch {}
+    if (m === "split") requestAnimationFrame(() => syncFrom("editor"));
+  }
+  function loadFlag(key: string, fallback: boolean): boolean {
+    try {
+      const v = localStorage.getItem(key);
+      return v === null ? fallback : v === "1";
+    } catch {
+      return fallback;
+    }
+  }
+
+  // ---------------------------------------------------------- scroll sync
+  // Whichever pane the user scrolls "drives" for a short window; scroll
+  // events from the pane we moved programmatically are ignored, which
+  // prevents the two panes from fighting each other.
+
+  let driver: "editor" | "preview" | null = null;
+  let driverTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function toggleSync() {
+    syncScroll = !syncScroll;
+    try {
+      localStorage.setItem("gnotes.syncScroll", syncScroll ? "1" : "0");
+    } catch {}
+    if (syncScroll) syncFrom("editor");
+    notify(syncScroll ? "Scroll sync on" : "Scroll sync off");
+  }
+
+  function syncFrom(source: "editor" | "preview", line?: number) {
+    if (!syncScroll || mode !== "split" || !editorRef || !previewRef) return;
+    if (driver && driver !== source) return;
+    driver = source;
+    clearTimeout(driverTimer);
+    driverTimer = setTimeout(() => (driver = null), 150);
+    if (source === "editor") previewRef.scrollToLine(line ?? editorRef.topLine());
+    else editorRef.scrollToLine(line ?? previewRef.topLine());
   }
 
   function notify(msg: string) {
@@ -297,6 +336,10 @@
   function onKeydown(e: KeyboardEvent) {
     if (!status?.unlocked || !(e.ctrlKey || e.metaKey)) return;
     const k = e.key.toLowerCase();
+    if (e.shiftKey) {
+      if (k === "s") (e.preventDefault(), toggleSync());
+      return;
+    }
     if (k === "n") (e.preventDefault(), newNote());
     else if (k === "s") (e.preventDefault(), flush());
     else if (k === "l") (e.preventDefault(), lock());
@@ -366,6 +409,15 @@
           </button>
           <span class="spacer"></span>
           <span class="save {saveState}">{saveLabel[saveState]}</span>
+          {#if mode === "split"}
+            <button
+              class="sync"
+              class:on={syncScroll}
+              aria-pressed={syncScroll}
+              title="Synchronize scrolling between editor and preview (Ctrl+Shift+S)"
+              onclick={toggleSync}>⇅ Sync</button
+            >
+          {/if}
           <div class="seg" role="group" aria-label="View mode (Ctrl+E)">
             {#each MODES as m}
               <button class:on={mode === m} onclick={() => setMode(m)}>{m}</button>
@@ -375,18 +427,28 @@
         <div class="panes {mode}">
           {#key current.id}
             {#if mode !== "preview"}
-              <section class="pane edit"><Editor doc={currentDraft()} onchange={onEdit} /></section>
+              <section class="pane edit"><Editor
+                  bind:this={editorRef}
+                  doc={currentDraft()}
+                  onchange={onEdit}
+                  onscrollline={(l) => syncFrom("editor", l)}
+                /></section>
             {/if}
           {/key}
           {#if mode !== "edit"}
-            <section class="pane preview"><Preview source={previewSource} /></section>
+            <section class="pane preview"><Preview
+                bind:this={previewRef}
+                source={previewSource}
+                onscrollline={(l) => syncFrom("preview", l)}
+                onrendered={() => syncFrom("editor")}
+              /></section>
           {/if}
         </div>
       {:else}
         <div class="empty">
           <p>Select a note or create one.</p>
           <button class="primary" onclick={newNote}>New note</button>
-          <p class="keys">Ctrl+N new · Ctrl+E switch view · Ctrl+S save · Ctrl+L lock</p>
+          <p class="keys">Ctrl+N new · Ctrl+E switch view · Ctrl+S save · Ctrl+Shift+S scroll sync · Ctrl+L lock</p>
         </div>
       {/if}
     </main>
@@ -497,6 +559,19 @@
     min-height: 0;
     min-width: 0;
     overflow: auto;
+  }
+  .pane.preview {
+    overflow: hidden;
+  }
+  .sync {
+    font-size: 0.8rem;
+    padding: 0.2rem 0.55rem;
+    margin-right: 0.35rem;
+    color: var(--muted);
+  }
+  .sync.on {
+    background: var(--selection);
+    color: var(--fg);
   }
   .panes.split .edit {
     border-right: 1px solid var(--border);

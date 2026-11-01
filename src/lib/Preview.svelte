@@ -3,8 +3,73 @@
   import { render } from "./markdown";
   import { describeLink, isOpenable, type LinkInfo } from "./links";
 
-  let { source }: { source: string } = $props();
+  let {
+    source,
+    onscrollline,
+    onrendered,
+  }: {
+    source: string;
+    /** Fired on scroll with the 0-based (fractional) source line at the top. */
+    onscrollline?: (line: number) => void;
+    /** Fired after new content is laid out (e.g. to re-sync scrolling). */
+    onrendered?: () => void;
+  } = $props();
   let html = $derived(render(source));
+
+  // ---------------------------------------------------- scroll sync support
+
+  let scroller = $state<HTMLDivElement>();
+  let article = $state<HTMLElement>();
+  type Anchor = { line: number; top: number };
+  let anchors: Anchor[] | null = null; // cached; null = needs recompute
+
+  /** Block elements tagged with their source line, with their offsets. */
+  function getAnchors(): Anchor[] {
+    if (anchors) return anchors;
+    if (!scroller || !article) return [];
+    const base = scroller.getBoundingClientRect().top - scroller.scrollTop;
+    const out: Anchor[] = [{ line: 0, top: 0 }];
+    for (const el of article.querySelectorAll<HTMLElement>("[data-line]")) {
+      const line = Number(el.dataset.line);
+      const top = el.getBoundingClientRect().top - base;
+      const last = out[out.length - 1];
+      if (line > last.line && top >= last.top) out.push({ line, top });
+    }
+    out.push({ line: source.split("\n").length, top: scroller.scrollHeight });
+    return (anchors = out);
+  }
+
+  function interpolate(list: Anchor[], value: number, from: "line" | "top"): number {
+    const to = from === "line" ? "top" : "line";
+    let i = 0;
+    while (i < list.length - 2 && list[i + 1][from] <= value) i++;
+    const a = list[i];
+    const b = list[i + 1] ?? a;
+    const span = b[from] - a[from];
+    const t = span > 0 ? Math.min(Math.max((value - a[from]) / span, 0), 1) : 0;
+    return a[to] + t * (b[to] - a[to]);
+  }
+
+  export function topLine(): number {
+    return scroller ? interpolate(getAnchors(), scroller.scrollTop, "top") : 0;
+  }
+
+  export function scrollToLine(line: number) {
+    if (scroller) scroller.scrollTop = interpolate(getAnchors(), line, "line");
+  }
+
+  // Layout changes (new content, images loading, resizing) invalidate anchors.
+  $effect(() => {
+    if (!article) return;
+    const ro = new ResizeObserver(() => (anchors = null));
+    ro.observe(article);
+    return () => ro.disconnect();
+  });
+  $effect(() => {
+    void html; // re-run after each render
+    anchors = null;
+    requestAnimationFrame(() => onrendered?.());
+  });
 
   type Hover = { info: LinkInfo; title: string; x: number; y: number; above: boolean };
   let hover = $state<Hover | null>(null);
@@ -68,8 +133,10 @@
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions, a11y_mouse_events_have_key_events -->
+<div class="scroller" bind:this={scroller} onscroll={() => onscrollline?.(topLine())}>
 <article
   class="markdown"
+  bind:this={article}
   {onclick}
   onmouseover={onover}
   onmouseout={onout}
@@ -78,6 +145,7 @@
 >
   {@html html}
 </article>
+</div>
 
 <svelte:window onblur={() => (hover = null)} />
 
@@ -116,6 +184,10 @@
 {/if}
 
 <style>
+  .scroller {
+    height: 100%;
+    overflow: auto;
+  }
   .link-tip {
     position: fixed;
     z-index: 50;
