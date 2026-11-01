@@ -18,7 +18,7 @@
   import Sidebar from "$lib/Sidebar.svelte";
   import Editor from "$lib/Editor.svelte";
   import Preview from "$lib/Preview.svelte";
-  import Modal, { ask, askSecret, confirmDanger } from "$lib/Modal.svelte";
+  import Modal, { ask, askSecret, confirmDanger, showInfo } from "$lib/Modal.svelte";
   import { restoreZoom, stepZoom, zoomKey } from "$lib/zoom";
 
   type Mode = "edit" | "split" | "preview";
@@ -321,6 +321,59 @@
     });
   }
 
+  // --------------------------------------------------------- import/export
+
+  let menuOpen = $state(false);
+  let menuWrap = $state<HTMLDivElement>();
+
+  /** Runs a Vault-menu action after closing the menu. */
+  function menuAction(fn: () => unknown) {
+    menuOpen = false;
+    fn();
+  }
+
+  async function importFolder() {
+    const dir = await openDialog({ directory: true, title: "Import a folder of Markdown files" });
+    if (!dir || Array.isArray(dir)) return;
+    await attempt(async () => {
+      notify("Importing…");
+      await flushAll();
+      const r = await api.importFolder(dir);
+      await loadTree();
+      selectedFolder = r.folder;
+      const msg = `Imported ${r.notes} notes and ${r.attachments} attachments into “${r.folder}”.`;
+      if (r.warnings.length) {
+        const shown = r.warnings.slice(0, 200);
+        const more = r.warnings.length > shown.length ? `\n… and ${r.warnings.length - shown.length} more` : "";
+        await showInfo(
+          "Import finished with warnings",
+          `${msg}\n\nThese referenced files were not imported:\n• ${shown.join("\n• ")}${more}`,
+        );
+      } else {
+        notify(msg);
+      }
+    });
+  }
+
+  async function exportMarkdown() {
+    const ok = await confirmDanger(
+      "Export an unencrypted copy?",
+      "All notes and attachments will be written as plain files. Anyone who can access that folder can read them.",
+      "Choose folder…",
+    );
+    if (!ok) return;
+    const dir = await openDialog({ directory: true, title: "Choose where to create the export folder" });
+    if (!dir || Array.isArray(dir)) return;
+    await attempt(async () => {
+      await flushAll();
+      const r = await api.exportMarkdown(dir);
+      await showInfo(
+        "Export finished",
+        `${r.notes} notes and ${r.attachments} attachments written to:\n${r.dir}\n\nThese files are NOT encrypted. Delete them when you no longer need them.`,
+      );
+    });
+  }
+
   // ------------------------------------------------------- vault & settings
 
   async function backup() {
@@ -473,7 +526,17 @@
   const saveLabel = { saved: "Saved", dirty: "Edited", saving: "Saving…", error: "Save failed" };
 </script>
 
-<svelte:window onkeydown={(e) => (onActivity(), onKeydown(e))} onmousedown={onActivity} />
+<svelte:window
+  onkeydown={(e) => {
+    onActivity();
+    if (e.key === "Escape") menuOpen = false;
+    onKeydown(e);
+  }}
+  onmousedown={(e) => {
+    onActivity();
+    if (menuOpen && !menuWrap?.contains(e.target as Node)) menuOpen = false;
+  }}
+/>
 
 <Modal />
 
@@ -499,9 +562,21 @@
         ondeleteFolder={deleteFolder}
       />
       <footer class="side-foot">
-        <button onclick={backup} title="Write an encrypted backup next to the vault">Backup</button>
-        <button onclick={settingsAutoLock} title="Auto-lock timeout">Auto-lock</button>
-        <button onclick={settingsPassword} title="Change master password">Password</button>
+        <div class="menu-wrap" bind:this={menuWrap}>
+          <button class="menu-btn" aria-haspopup="menu" aria-expanded={menuOpen} onclick={() => (menuOpen = !menuOpen)}>
+            Vault ▴
+          </button>
+          {#if menuOpen}
+            <div class="menu" role="menu">
+              <button role="menuitem" onclick={() => menuAction(importFolder)}>Import Markdown folder…</button>
+              <button role="menuitem" onclick={() => menuAction(exportMarkdown)}>Export as Markdown…</button>
+              <hr />
+              <button role="menuitem" onclick={() => menuAction(backup)}>Backup now</button>
+              <button role="menuitem" onclick={() => menuAction(settingsAutoLock)}>Auto-lock…</button>
+              <button role="menuitem" onclick={() => menuAction(settingsPassword)}>Change password…</button>
+            </div>
+          {/if}
+        </div>
         <button class="primary" onclick={lock} title="Lock (Ctrl+L)">Lock</button>
       </footer>
     </aside>
@@ -608,10 +683,47 @@
     padding: 0.5rem;
     border-top: 1px solid var(--border);
   }
-  .side-foot button {
+  .side-foot > button,
+  .menu-btn {
+    width: 100%;
+    font-size: 0.85rem;
+    padding: 0.35rem 0.5rem;
+  }
+  .side-foot > * {
     flex: 1;
-    font-size: 0.8rem;
-    padding: 0.3rem 0.4rem;
+  }
+  .menu-wrap {
+    position: relative;
+  }
+  .menu {
+    position: absolute;
+    bottom: calc(100% + 0.35rem);
+    left: 0;
+    min-width: 14rem;
+    display: flex;
+    flex-direction: column;
+    padding: 0.3rem;
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 10px 30px rgb(0 0 0 / 0.3);
+    z-index: 20;
+  }
+  .menu button {
+    border: none;
+    background: none;
+    text-align: left;
+    padding: 0.4rem 0.6rem;
+    font-size: 0.88rem;
+    border-radius: 5px;
+  }
+  .menu button:hover {
+    background: var(--hover);
+  }
+  .menu hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 0.25rem 0;
   }
   main {
     display: flex;

@@ -1439,6 +1439,7 @@ dependencies = [
  "argon2",
  "getrandom 0.4.3",
  "hex",
+ "regex",
  "rusqlite",
  "serde",
  "tempfile",

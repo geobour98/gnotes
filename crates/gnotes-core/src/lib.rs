@@ -4,6 +4,7 @@ pub mod attachments;
 pub mod crypto;
 pub mod error;
 pub mod paths;
+pub mod transfer;
 pub mod vault;
 
 pub use attachments::AttachmentMeta;

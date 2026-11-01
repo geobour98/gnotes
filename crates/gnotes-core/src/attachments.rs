@@ -1,7 +1,7 @@
 //! Attachments: files stored encrypted inside the vault and referenced from
 //! note bodies as `attachment:<id>` (e.g. `![photo](attachment:<id>)`).
 
-use rusqlite::{OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 
 use crate::error::{Error, Result};
@@ -85,29 +85,29 @@ pub fn mime_for_name(name: &str) -> &'static str {
     }
 }
 
+/// Stores a file (usable inside a transaction). MIME comes from the name
+/// when not given.
+pub(crate) fn insert(conn: &Connection, name: &str, mime: Option<&str>, data: &[u8]) -> Result<AttachmentMeta> {
+    if data.len() > MAX_SIZE {
+        return Err(Error::TooLarge(format!("{name} ({} MB, limit {} MB)", data.len() >> 20, MAX_SIZE >> 20)));
+    }
+    let name = sanitize_name(name);
+    let mime = match mime.map(str::trim) {
+        Some(m) if !m.is_empty() && m.len() < 100 && m.contains('/') => m.to_ascii_lowercase(),
+        _ => mime_for_name(&name).to_string(),
+    };
+    let meta = AttachmentMeta { id: uuid::Uuid::new_v4().to_string(), name, mime, size: data.len() as i64, created: now_ms() };
+    conn.execute(
+        "INSERT INTO attachments(id, name, mime, size, data, created) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![meta.id, meta.name, meta.mime, meta.size, data, meta.created],
+    )?;
+    Ok(meta)
+}
+
 impl Vault {
     /// Stores a file. The MIME type is derived from the name when not given.
     pub fn add_attachment(&mut self, name: &str, mime: Option<&str>, data: &[u8]) -> Result<AttachmentMeta> {
-        if data.len() > MAX_SIZE {
-            return Err(Error::TooLarge(format!("{name} ({} MB, limit {} MB)", data.len() >> 20, MAX_SIZE >> 20)));
-        }
-        let name = sanitize_name(name);
-        let mime = match mime.map(str::trim) {
-            Some(m) if !m.is_empty() && m.len() < 100 && m.contains('/') => m.to_ascii_lowercase(),
-            _ => mime_for_name(&name).to_string(),
-        };
-        let meta = AttachmentMeta {
-            id: uuid::Uuid::new_v4().to_string(),
-            name,
-            mime,
-            size: data.len() as i64,
-            created: now_ms(),
-        };
-        self.conn.execute(
-            "INSERT INTO attachments(id, name, mime, size, data, created) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![meta.id, meta.name, meta.mime, meta.size, data, meta.created],
-        )?;
-        Ok(meta)
+        insert(&self.conn, name, mime, data)
     }
 
     pub fn attachment_meta(&self, id: &str) -> Result<AttachmentMeta> {

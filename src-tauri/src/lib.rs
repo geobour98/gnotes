@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use gnotes_core::attachments::{self, AttachmentMeta};
+use gnotes_core::transfer::{ExportReport, ImportReport};
 use gnotes_core::{Note, NoteMeta, Tree, Vault};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
@@ -276,6 +277,22 @@ fn backup_now(state: State<'_, AppState>) -> CmdResult<String> {
     })
 }
 
+// ------------------------------------------------------------ import / export
+
+/// Exports everything as plain Markdown into a new `gnotes-export-<time>`
+/// folder inside `parent`. The export is NOT encrypted.
+#[tauri::command]
+async fn export_markdown(state: State<'_, AppState>, parent: String) -> CmdResult<ExportReport> {
+    let dest = PathBuf::from(parent).join(format!("gnotes-export-{}", timestamp()));
+    state.with_vault(|v| v.export_to_dir(&dest))
+}
+
+/// Imports a folder of Markdown files (Obsidian vault, Joplin export, ...).
+#[tauri::command]
+async fn import_folder(state: State<'_, AppState>, path: String) -> CmdResult<ImportReport> {
+    state.with_vault(|v| v.import_dir(std::path::Path::new(&path)))
+}
+
 // ---------------------------------------------------------------- attachments
 
 /// Decodes `%XX` escapes (used for file names sent in IPC headers).
@@ -481,6 +498,8 @@ pub fn run() {
             set_auto_lock,
             change_password,
             backup_now,
+            export_markdown,
+            import_folder,
             attachment_add,
             attachment_add_paths,
             attachment_meta,

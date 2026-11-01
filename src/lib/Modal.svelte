@@ -7,6 +7,7 @@
     confirm: string;
     danger?: boolean;
     secret?: boolean;
+    alert?: boolean; // only an OK button
     resolve: (v: string | null) => void;
   };
   let current = $state<Req | null>(null);
@@ -16,6 +17,11 @@
   }
   export function askSecret(title: string, confirm = "OK"): Promise<string | null> {
     return new Promise((resolve) => (current = { title, input: "", confirm, secret: true, resolve }));
+  }
+  export function showInfo(title: string, message: string): Promise<void> {
+    return new Promise((resolve) => {
+      current = { title, message, confirm: "OK", alert: true, resolve: () => resolve() };
+    });
   }
   export function confirmDanger(title: string, message: string, confirm = "Delete"): Promise<boolean> {
     return new Promise((resolve) => {
@@ -68,7 +74,9 @@
         {/if}
       {/if}
       <div class="row">
-        <button type="button" onclick={() => done(false)}>Cancel</button>
+        {#if !current.alert}
+          <button type="button" onclick={() => done(false)}>Cancel</button>
+        {/if}
         <button type="submit" class:danger={current.danger} class="primary">{current.confirm}</button>
       </div>
     </form>
@@ -99,6 +107,10 @@
   p {
     margin: 0 0 1rem;
     color: var(--muted);
+    white-space: pre-wrap;
+    max-height: 50vh;
+    overflow-y: auto;
+    word-break: break-word;
   }
   input {
     width: 100%;

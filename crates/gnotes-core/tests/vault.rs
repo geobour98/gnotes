@@ -146,3 +146,93 @@ fn attachment_size_limit() {
     let big = vec![0u8; gnotes_core::attachments::MAX_SIZE + 1];
     assert!(matches!(v.add_attachment("big.bin", None, &big), Err(Error::TooLarge(_))));
 }
+
+#[test]
+fn export_then_import_roundtrip() {
+    let dir = tmp();
+    let mut v = Vault::create(dir.path().join("v.gnotes"), "pw").unwrap();
+    v.create_folder("projects/thesis").unwrap();
+    let img = v.add_attachment("my pic (1).png", None, b"PNGDATA").unwrap();
+    let pdf = v.add_attachment("paper.pdf", None, b"PDFDATA").unwrap();
+    let a = v.create_note("projects/thesis", Some("Draft")).unwrap();
+    v.save_note(&a.id, &format!("# Draft\n![p](attachment:{})\n[📎 paper](attachment:{})\n", img.id, pdf.id)).unwrap();
+    let b = v.create_note("", Some("Root note")).unwrap();
+    v.save_note(&b.id, &format!("again ![p](attachment:{})", img.id)).unwrap();
+
+    let out = dir.path().join("export");
+    let rep = v.export_to_dir(&out).unwrap();
+    assert_eq!((rep.notes, rep.attachments), (2, 2));
+    let draft = fs::read_to_string(out.join("projects/thesis/Draft.md")).unwrap();
+    assert!(draft.contains("![p](../../attachments/my%20pic%20%281%29.png)"), "{draft}");
+    assert!(draft.contains("(../../attachments/paper.pdf)"));
+    let root = fs::read_to_string(out.join("Root note.md")).unwrap();
+    assert_eq!(root, "again ![p](attachments/my%20pic%20%281%29.png)");
+    assert_eq!(fs::read(out.join("attachments/my pic (1).png")).unwrap(), b"PNGDATA");
+    assert!(v.export_to_dir(&out).is_err(), "must not write into an existing folder");
+
+    // Re-import into a fresh vault: links become attachment: references again.
+    let mut w = Vault::create(dir.path().join("w.gnotes"), "pw").unwrap();
+    let rep = w.import_dir(&out).unwrap();
+    assert_eq!((rep.folder.as_str(), rep.notes, rep.attachments), ("export", 2, 2));
+    assert!(rep.warnings.is_empty(), "{:?}", rep.warnings);
+    let t = w.tree().unwrap();
+    assert_eq!(t.folders, ["export", "export/projects", "export/projects/thesis"]);
+    let draft = t.notes.iter().find(|n| n.title == "Draft").unwrap();
+    assert_eq!(draft.folder, "export/projects/thesis");
+    let body = w.get_note(&draft.id).unwrap().body;
+    let refs = gnotes_core::attachments::find_refs(&body);
+    assert_eq!(refs.len(), 2, "{body}");
+    let (meta, data) = w.attachment(refs[0].1).unwrap();
+    assert_eq!((meta.name.as_str(), data.as_slice()), ("my pic (1).png", &b"PNGDATA"[..]));
+    // Same file referenced from two notes is stored once.
+    assert_eq!(w.attachments().unwrap().len(), 2);
+    // Importing again goes into "export 2".
+    assert_eq!(w.import_dir(&out).unwrap().folder, "export 2");
+}
+
+#[test]
+fn import_obsidian_style_vault() {
+    let dir = tmp();
+    let src = dir.path().join("My Vault");
+    fs::create_dir_all(src.join("assets")).unwrap();
+    fs::create_dir_all(src.join("daily")).unwrap();
+    fs::create_dir_all(src.join(".obsidian")).unwrap();
+    fs::write(src.join(".obsidian/app.json"), "{}").unwrap();
+    fs::write(src.join("assets/pic.png"), b"IMG").unwrap();
+    fs::write(src.join("doc.pdf"), b"PDF").unwrap();
+    fs::write(dir.path().join("secret.txt"), b"outside").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(dir.path().join("secret.txt"), src.join("link.txt")).unwrap();
+    fs::write(
+        src.join("daily/2026-11-01.md"),
+        "---\ntags: [x]\n---\n![[pic.png|300]]\n![[doc.pdf]]\n![[Other note]]\n[[Other note]]\n\
+         ![rel](../assets/pic.png)\n[ext](https://example.com)\n![gone](nope.png)\n\
+         [leak](link.txt)\n<img src=\"../assets/pic.png\" width=\"10\">\n```\n![[pic.png]]\n```\n",
+    )
+    .unwrap();
+    fs::write(src.join("Other note.md"), "plain").unwrap();
+    fs::write(src.join("bad:name?.md"), "x").unwrap();
+
+    let mut v = Vault::create(dir.path().join("v.gnotes"), "pw").unwrap();
+    let rep = v.import_dir(&src).unwrap();
+    assert_eq!((rep.folder.as_str(), rep.notes, rep.attachments), ("My Vault", 3, 2));
+    assert_eq!(rep.warnings.len(), 1, "{:?}", rep.warnings);
+    assert!(rep.warnings[0].contains("nope.png"));
+
+    let t = v.tree().unwrap();
+    assert!(t.notes.iter().any(|n| n.title == "bad-name-" && n.folder == "My Vault"));
+    let daily = t.notes.iter().find(|n| n.folder == "My Vault/daily").unwrap();
+    let body = v.get_note(&daily.id).unwrap().body;
+    let pic = v.attachments().unwrap().into_iter().find(|a| a.name == "pic.png").unwrap();
+    let doc = v.attachments().unwrap().into_iter().find(|a| a.name == "doc.pdf").unwrap();
+    assert!(body.contains(&format!("![pic.png](attachment:{})", pic.id)), "{body}");
+    assert!(body.contains(&format!("[📎 doc.pdf](attachment:{})", doc.id)));
+    assert!(body.contains("![[Other note]]\n[[Other note]]"), "note embeds/links untouched");
+    assert!(body.contains(&format!("![rel](attachment:{})", pic.id)));
+    assert!(body.contains("[ext](https://example.com)"));
+    assert!(body.contains("![gone](nope.png)"));
+    assert!(body.contains("[leak](link.txt)"), "symlink outside the folder must not be imported");
+    assert!(body.contains(&format!("<img src=\"attachment:{}\" width=\"10\">", pic.id)));
+    assert!(body.contains("```\n![[pic.png]]\n```"), "code blocks untouched");
+    assert!(body.starts_with("---\ntags: [x]\n---\n"));
+}

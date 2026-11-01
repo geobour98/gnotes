@@ -23,6 +23,17 @@ export interface AttachmentMeta {
   size: number;
   created: number;
 }
+export interface ExportReport {
+  dir: string;
+  notes: number;
+  attachments: number;
+}
+export interface ImportReport {
+  folder: string;
+  notes: number;
+  attachments: number;
+  warnings: string[];
+}
 export interface Status {
   unlocked: boolean;
   vault_path: string;
@@ -42,6 +53,9 @@ export const api = {
   changePassword: (current: string, next: string) =>
     invoke<void>("change_password", { current, new: next }),
   backup: () => invoke<string>("backup_now"),
+
+  exportMarkdown: (parent: string) => invoke<ExportReport>("export_markdown", { parent }),
+  importFolder: (path: string) => invoke<ImportReport>("import_folder", { path }),
 
   attachmentAdd: (name: string, mime: string, bytes: Uint8Array) =>
     invoke<AttachmentMeta>("attachment_add", bytes, {
