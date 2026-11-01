@@ -51,6 +51,15 @@ DOMPurify.addHook("uponSanitizeElement", (node, data) => {
   }
 });
 
+// Link titles ([text](url "title")) go into our hover tooltip instead of the
+// native one, which would otherwise pop up on top of it.
+DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+  if (node.tagName === "A" && node.hasAttribute("title")) {
+    node.setAttribute("data-title", node.getAttribute("title")!);
+    node.removeAttribute("title");
+  }
+});
+
 const PURIFY = {
   FORBID_TAGS: ["style", "form", "button", "textarea", "select", "iframe", "object", "embed"],
   FORBID_ATTR: ["style", "srcset"],
