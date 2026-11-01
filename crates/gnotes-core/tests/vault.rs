@@ -236,3 +236,50 @@ fn import_obsidian_style_vault() {
     assert!(body.contains("```\n![[pic.png]]\n```"), "code blocks untouched");
     assert!(body.starts_with("---\ntags: [x]\n---\n"));
 }
+
+#[test]
+fn link_shared_image_folder() {
+    let dir = tmp();
+    let img = dir.path().join("img");
+    fs::create_dir_all(img.join("2025")).unwrap();
+    fs::write(img.join("Photo.PNG"), b"P1").unwrap();
+    fs::write(img.join("2025/chart.png"), b"C-2025").unwrap();
+    fs::create_dir_all(img.join("old")).unwrap();
+    fs::write(img.join("old/chart.png"), b"C-OLD").unwrap();
+    fs::write(img.join("unused.png"), b"U").unwrap();
+
+    let mut v = Vault::create(dir.path().join("v.gnotes"), "pw").unwrap();
+    v.create_folder("work").unwrap();
+    let a = v.create_note("work", Some("A")).unwrap();
+    let b = v.create_note("", Some("B")).unwrap();
+    let c = v.create_note("", Some("C")).unwrap();
+    v.save_note(&a.id, "![](../img/photo.png)\n![[chart.png]]\n![x](img/2025/chart.png)\n![m](img/missing.png)").unwrap();
+    v.save_note(&b.id, "<img src=\"img/Photo.PNG\">\n![[Photo.PNG|200]]").unwrap();
+    v.save_note(&c.id, "no images here").unwrap();
+    let before = v.get_note(&a.id).unwrap().updated;
+
+    let rep = v.link_files_from_dir(&img).unwrap();
+    assert_eq!((rep.notes, rep.links), (2, 5), "{rep:?}");
+    // photo + one chart (both chart links resolve to the same best match); unused is skipped.
+    let atts = v.attachments().unwrap();
+    assert!(atts.iter().all(|m| m.name != "unused.png"));
+    assert_eq!(rep.attachments, atts.len());
+    assert_eq!(rep.warnings, ["work/A: missing img/missing.png"]);
+
+    let body_a = v.get_note(&a.id).unwrap();
+    assert_eq!(body_a.updated, before, "repair must not bump the modified time");
+    let refs = gnotes_core::attachments::find_refs(&body_a.body);
+    assert_eq!(refs.len(), 3, "{}", body_a.body);
+    // The explicit 2025 path picked the 2025 file, not old/chart.png.
+    assert_eq!(v.attachment(refs[2].1).unwrap().1, b"C-2025");
+    assert!(body_a.body.ends_with("![m](img/missing.png)"));
+
+    // The shared photo is stored once for both notes.
+    let body_b = v.get_note(&b.id).unwrap().body;
+    let photo_a = refs[0].1.to_string();
+    assert!(gnotes_core::attachments::find_refs(&body_b).iter().all(|(_, id)| *id == photo_a), "{body_b}");
+
+    // Running it again changes nothing.
+    let again = v.link_files_from_dir(&img).unwrap();
+    assert_eq!((again.notes, again.links, again.attachments), (0, 0, 0));
+}

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { listen } from "@tauri-apps/api/event";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
   import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
@@ -355,6 +355,43 @@
     });
   }
 
+  /** Lists problems in a dialog (capped so huge lists stay readable). */
+  function warningList(warnings: string[]): string {
+    const shown = warnings.slice(0, 200);
+    const more = warnings.length > shown.length ? `\n… and ${warnings.length - shown.length} more` : "";
+    return `• ${shown.join("\n• ")}${more}`;
+  }
+
+  async function linkImagesFromFolder() {
+    const dir = await openDialog({
+      directory: true,
+      title: "Choose the folder your notes take images from (e.g. img)",
+    });
+    if (!dir || Array.isArray(dir)) return;
+    await attempt(async () => {
+      notify("Importing images…");
+      await flushAll();
+      const r = await api.linkFilesFromFolder(dir);
+      await loadTree();
+      // The open note may have been rewritten: reload it so the editor
+      // (and autosave) work on the repaired text.
+      if (current) {
+        const meta = { ...current };
+        current = null;
+        await tick();
+        await openNote(meta);
+      }
+      const msg = r.links
+        ? `Copied ${r.attachments} images into the vault and updated ${r.links} references in ${r.notes} notes.`
+        : "No note references a file in that folder.";
+      if (r.warnings.length) {
+        await showInfo("Images imported: some files are still missing", `${msg}\n\nNot found in that folder:\n${warningList(r.warnings)}`);
+      } else {
+        notify(msg);
+      }
+    });
+  }
+
   async function exportMarkdown() {
     const ok = await confirmDanger(
       "Export an unencrypted copy?",
@@ -569,6 +606,7 @@
           {#if menuOpen}
             <div class="menu" role="menu">
               <button role="menuitem" onclick={() => menuAction(importFolder)}>Import Markdown folder…</button>
+              <button role="menuitem" onclick={() => menuAction(linkImagesFromFolder)}>Import images from folder…</button>
               <button role="menuitem" onclick={() => menuAction(exportMarkdown)}>Export as Markdown…</button>
               <hr />
               <button role="menuitem" onclick={() => menuAction(backup)}>Backup now</button>

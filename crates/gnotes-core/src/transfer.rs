@@ -29,6 +29,18 @@ pub struct ExportReport {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct LinkReport {
+    /// Notes whose links were rewritten.
+    pub notes: usize,
+    /// Files stored as new attachments.
+    pub attachments: usize,
+    /// Links rewritten to attachments.
+    pub links: usize,
+    /// Links that still point to files that weren't found.
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct ImportReport {
     /// Vault folder everything was imported into.
     pub folder: String,
@@ -250,6 +262,8 @@ struct Importer<'a> {
     src: &'a Source,
     imported: HashMap<PathBuf, AttachmentMeta>,
     warnings: Vec<String>,
+    /// Links rewritten to attachment: references.
+    links: usize,
 }
 
 impl Importer<'_> {
@@ -268,11 +282,31 @@ impl Importer<'_> {
     }
 
     /// Obsidian resolves `![[name.png]]` by file name anywhere in the vault.
-    fn resolve_by_name(&self, note_dir: &Path, target: &str) -> Option<PathBuf> {
-        self.resolve(note_dir, target).or_else(|| {
-            let name = Path::new(target).file_name()?.to_string_lossy().to_lowercase();
-            self.src.by_name.get(&name)?.first().and_then(|p| p.canonicalize().ok())
-        })
+    /// Finds the file a link points to: relative to the note (when the note
+    /// has a location on disk), otherwise by file name anywhere in the folder,
+    /// like Obsidian. Among same-named files, the one whose trailing path
+    /// components best match the link wins.
+    fn locate(&self, note_dir: Option<&Path>, target: &str) -> Option<PathBuf> {
+        if let Some(p) = note_dir.and_then(|d| self.resolve(d, target)) {
+            return Some(p);
+        }
+        let lower_parts = |p: &Path| -> Vec<String> {
+            p.components()
+                .filter_map(|c| match c {
+                    std::path::Component::Normal(s) => Some(s.to_string_lossy().to_lowercase()),
+                    _ => None,
+                })
+                .collect()
+        };
+        let want = lower_parts(Path::new(target));
+        let candidates = self.src.by_name.get(want.last()?)?;
+        candidates
+            .iter()
+            .max_by_key(|p| {
+                let have = lower_parts(p.strip_prefix(&self.src.root).unwrap_or(p));
+                want.iter().rev().zip(have.iter().rev()).take_while(|(a, b)| a == b).count()
+            })
+            .and_then(|p| p.canonicalize().ok())
     }
 
     fn attach(&mut self, path: &Path) -> Option<AttachmentMeta> {
@@ -300,9 +334,10 @@ impl Importer<'_> {
     }
 
     /// Rewrites links to local files into `attachment:<id>` references.
-    fn rewrite(&mut self, note: &Path, body: &str) -> String {
-        let note_dir = note.parent().unwrap_or(&self.src.root).to_path_buf();
-        let note_rel = self.rel(note);
+    /// `note_label` names the note in warnings; `note_dir` is its folder on
+    /// disk when importing (None for notes already in the vault).
+    fn rewrite(&mut self, note_label: &str, note_dir: Option<&Path>, body: &str) -> String {
+        let note_rel = note_label;
         let code = fenced_ranges(body);
         let in_code = |pos: usize| code.iter().any(|r| r.contains(&pos));
 
@@ -315,13 +350,14 @@ impl Importer<'_> {
                 if in_code(c.get(0).unwrap().start()) || !has_ext || is_markdown(Path::new(&target)) {
                     return whole; // note embeds stay as they are
                 }
-                let Some(path) = self.resolve_by_name(&note_dir, &target) else {
+                let Some(path) = self.locate(note_dir, &target) else {
                     self.warnings.push(format!("{note_rel}: missing {target}"));
                     return whole;
                 };
                 let Some(m) = self.attach(&path) else { return whole };
                 let alias = c.get(2).map(|a| a.as_str().trim()).filter(|a| !a.is_empty() && !a.chars().all(|ch| ch.is_ascii_digit() || ch == 'x'));
                 let label = alias.unwrap_or(&m.name).replace(['[', ']'], "");
+                self.links += 1;
                 if m.mime.starts_with("image/") {
                     format!("![{label}](attachment:{})", m.id)
                 } else {
@@ -344,13 +380,14 @@ impl Importer<'_> {
                 if is_markdown(Path::new(&target)) {
                     return whole; // links between notes: kept for later wikilink support
                 }
-                let Some(path) = self.resolve(&note_dir, &target) else {
+                let Some(path) = self.locate(note_dir, &target) else {
                     if !c[1].is_empty() {
                         self.warnings.push(format!("{note_rel}: missing {target}"));
                     }
                     return whole;
                 };
                 let Some(m) = self.attach(&path) else { return whole };
+                self.links += 1;
                 format!("{}[{}](attachment:{}{})", &c[1], &c[2], m.id, c.get(4).map_or("", |t| t.as_str()))
             })
             .into_owned();
@@ -366,8 +403,11 @@ impl Importer<'_> {
                     return whole;
                 }
                 let target = percent_decode(raw.split(['#', '?']).next().unwrap_or(""));
-                match self.resolve(&note_dir, &target).and_then(|p| self.attach(&p)) {
-                    Some(m) => format!("{}\"attachment:{}\"", &c[1], m.id),
+                match self.locate(note_dir, &target).and_then(|p| self.attach(&p)) {
+                    Some(m) => {
+                        self.links += 1;
+                        format!("{}\"attachment:{}\"", &c[1], m.id)
+                    }
                     None => whole,
                 }
             })
@@ -394,7 +434,7 @@ impl Vault {
         let top = unique(&base, |n| existing.contains(n));
 
         let tx = self.conn.transaction()?;
-        let mut imp = Importer { conn: &tx, src: &src, imported: HashMap::new(), warnings: Vec::new() };
+        let mut imp = Importer { conn: &tx, src: &src, imported: HashMap::new(), warnings: Vec::new(), links: 0 };
         let mut folders: HashSet<String> = HashSet::new();
         let mut titles: HashSet<(String, String)> = HashSet::new();
 
@@ -420,7 +460,8 @@ impl Vault {
                     continue;
                 }
             };
-            let body = imp.rewrite(note, &String::from_utf8_lossy(&raw));
+            let label = imp.rel(note);
+            let body = imp.rewrite(&label, note.parent(), &String::from_utf8_lossy(&raw));
             let modified = fs::metadata(note)
                 .and_then(|m| m.modified())
                 .ok()
@@ -437,6 +478,44 @@ impl Vault {
             attachments: imp.imported.len(),
             warnings: imp.warnings,
         };
+        tx.commit()?;
+        Ok(report)
+    }
+}
+
+impl Vault {
+    /// Repairs links in existing notes that point to local files (e.g. a
+    /// shared `img/` folder that wasn't imported): every referenced file
+    /// found in `dir` (searched recursively, matched by file name) is stored
+    /// once and all links to it become `attachment:` references.
+    /// Unreferenced files are ignored. One transaction: all or nothing.
+    pub fn link_files_from_dir(&mut self, dir: &Path) -> Result<LinkReport> {
+        let root = dir.canonicalize().map_err(|_| Error::NotFound(dir.display().to_string()))?;
+        if !root.is_dir() {
+            return Err(Error::NotFound(format!("{} is not a folder", root.display())));
+        }
+        let src = scan(&root)?;
+        let notes: Vec<(String, String, String)> = {
+            let mut st = self.conn.prepare("SELECT id, folder, title, body FROM notes ORDER BY folder, title")?;
+            st.query_map([], |r| {
+                let (id, folder, title, body): (String, String, String, String) = (r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?);
+                Ok((id, paths::join(&folder, &title), body))
+            })?
+            .collect::<rusqlite::Result<_>>()?
+        };
+
+        let tx = self.conn.transaction()?;
+        let mut imp = Importer { conn: &tx, src: &src, imported: HashMap::new(), warnings: Vec::new(), links: 0 };
+        let mut changed = 0;
+        for (id, label, body) in &notes {
+            let new_body = imp.rewrite(label, None, body);
+            if new_body != *body {
+                // `updated` is left alone: this is a repair, not an edit.
+                tx.execute("UPDATE notes SET body = ?2 WHERE id = ?1", params![id, new_body])?;
+                changed += 1;
+            }
+        }
+        let report = LinkReport { notes: changed, attachments: imp.imported.len(), links: imp.links, warnings: imp.warnings };
         tx.commit()?;
         Ok(report)
     }

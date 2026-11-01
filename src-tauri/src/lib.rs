@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use gnotes_core::attachments::{self, AttachmentMeta};
-use gnotes_core::transfer::{ExportReport, ImportReport};
+use gnotes_core::transfer::{ExportReport, ImportReport, LinkReport};
 use gnotes_core::{Note, NoteMeta, Tree, Vault};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
@@ -293,6 +293,13 @@ async fn import_folder(state: State<'_, AppState>, path: String) -> CmdResult<Im
     state.with_vault(|v| v.import_dir(std::path::Path::new(&path)))
 }
 
+/// Links notes' references to files in a folder (e.g. a shared `img/`)
+/// to attachments, storing each referenced file once.
+#[tauri::command]
+async fn link_files_from_folder(state: State<'_, AppState>, path: String) -> CmdResult<LinkReport> {
+    state.with_vault(|v| v.link_files_from_dir(std::path::Path::new(&path)))
+}
+
 // ---------------------------------------------------------------- attachments
 
 /// Decodes `%XX` escapes (used for file names sent in IPC headers).
@@ -500,6 +507,7 @@ pub fn run() {
             backup_now,
             export_markdown,
             import_folder,
+            link_files_from_folder,
             attachment_add,
             attachment_add_paths,
             attachment_meta,

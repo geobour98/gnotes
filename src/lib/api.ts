@@ -34,6 +34,12 @@ export interface ImportReport {
   attachments: number;
   warnings: string[];
 }
+export interface LinkReport {
+  notes: number;
+  attachments: number;
+  links: number;
+  warnings: string[];
+}
 export interface Status {
   unlocked: boolean;
   vault_path: string;
@@ -56,6 +62,7 @@ export const api = {
 
   exportMarkdown: (parent: string) => invoke<ExportReport>("export_markdown", { parent }),
   importFolder: (path: string) => invoke<ImportReport>("import_folder", { path }),
+  linkFilesFromFolder: (path: string) => invoke<LinkReport>("link_files_from_folder", { path }),
 
   attachmentAdd: (name: string, mime: string, bytes: Uint8Array) =>
     invoke<AttachmentMeta>("attachment_add", bytes, {

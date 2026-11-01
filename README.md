@@ -42,6 +42,10 @@ Vault menu (bottom of the sidebar):
   vaults (`![[image.png]]` embeds resolved by name, `.obsidian/` skipped) and
   Joplin Markdown exports (`_resources/`). Referenced images and files become
   encrypted attachments. Imported into a new folder named after the source.
+- **Import images from folder…**: for notes already in the vault whose image
+  links point to a shared folder (e.g. `img/`). Every referenced file found
+  there (matched by file name, any subfolder) is copied into the vault once and all links to
+  it are rewritten. Unused files are skipped; missing ones are listed.
 - **Export as Markdown…**: writes `gnotes-export-<time>/` with one `.md` per
   note and an `attachments/` folder; links are rewritten to relative paths.
   The export is NOT encrypted.
