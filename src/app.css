@@ -261,3 +261,97 @@ button.link:hover {
 .markdown audio {
   max-width: 100%;
 }
+
+/* ------------------------------------------------- extended markdown */
+
+.markdown mark {
+  background: color-mix(in srgb, #ffd54a 55%, transparent);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 0.15em;
+}
+.markdown .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.25em 0;
+}
+.markdown div.mermaid {
+  margin: 1em 0;
+  text-align: center;
+  overflow-x: auto;
+  white-space: pre; /* source shows sensibly until the diagram renders */
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.85em;
+}
+.markdown div.mermaid[data-rendered] {
+  white-space: normal;
+}
+.markdown div.mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+.markdown .mermaid-error {
+  color: var(--danger);
+  text-align: left;
+  white-space: pre-wrap;
+}
+
+.markdown .frontmatter {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 1.5em;
+  overflow: hidden;
+}
+.markdown .frontmatter-label {
+  font-size: 0.75em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  padding: 0.35em 0.8em;
+  background: var(--code-bg);
+}
+.markdown .frontmatter pre {
+  margin: 0;
+  border-radius: 0;
+  background: none;
+  font-size: 0.85em;
+}
+
+.markdown .footnotes {
+  font-size: 0.9em;
+  color: var(--muted);
+}
+.markdown .footnote-ref a,
+.markdown .footnote-backref {
+  text-decoration: none;
+}
+
+.markdown blockquote.callout {
+  --c: var(--accent);
+  border-left: 3px solid var(--c);
+  background: color-mix(in srgb, var(--c) 9%, transparent);
+  color: var(--fg);
+  border-radius: 0 8px 8px 0;
+  padding: 0.6em 1em;
+}
+.markdown blockquote.callout-ok {
+  --c: #2f9e5a;
+}
+.markdown blockquote.callout-warn {
+  --c: #d9822b;
+}
+.markdown blockquote.callout-bad {
+  --c: var(--danger);
+}
+.markdown blockquote.callout-neutral {
+  --c: #8a6fd1;
+}
+.markdown .callout-title {
+  font-weight: 700;
+  color: var(--c);
+  margin-bottom: 0.3em;
+}
+.markdown blockquote.callout > :last-child {
+  margin-bottom: 0;
+}

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { openUrl } from "@tauri-apps/plugin-opener";
-  import { render } from "./markdown";
+  import { findAnchor, render } from "./markdown";
+  import { renderMermaid } from "./mermaid";
   import { describeLink, isOpenable, type LinkInfo } from "./links";
   import { api, formatSize, type AttachmentMeta } from "./api";
 
@@ -72,7 +73,10 @@
   $effect(() => {
     void html; // re-run after each render
     anchors = null;
-    requestAnimationFrame(() => onrendered?.());
+    requestAnimationFrame(() => {
+      onrendered?.();
+      if (article) renderMermaid(article).catch(console.error);
+    });
   });
 
   type Hover = {
@@ -147,7 +151,7 @@
     } else if (info.kind === "attachment") {
       onattachment?.(info.id);
     } else if (info.kind === "anchor") {
-      document.getElementById(info.target)?.scrollIntoView();
+      if (article) findAnchor(article, info.target)?.scrollIntoView();
     }
   }
 </script>

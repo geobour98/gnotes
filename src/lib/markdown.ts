@@ -4,12 +4,25 @@
 // through DOMPurify. This matters: clipped web pages are untrusted, and
 // script running in the webview could call backend commands.
 import MarkdownIt from "markdown-it";
+import footnote from "markdown-it-footnote";
+import mark from "markdown-it-mark";
+import texmath from "markdown-it-texmath";
+import katex from "katex";
 import DOMPurify from "dompurify";
 import hljs from "highlight.js/lib/common";
 import { attachmentUrl, ATTACHMENT_ID } from "./api";
 
-function escapeHtml(s: string): string {
+export function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+}
+
+/** GitHub-style heading slug, also used to resolve `#Heading Text` links. */
+export function slugify(text: string): string {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s_-]/gu, "")
+    .replace(/\s+/g, "-");
 }
 
 const md = new MarkdownIt({
@@ -18,13 +31,31 @@ const md = new MarkdownIt({
   typographer: false,
   highlight(code, lang) {
     const language = lang && hljs.getLanguage(lang) ? lang : null;
-    const html = language
+    // markdown-it wraps this in <pre><code ...>, keeping our data-line attr.
+    return language
       ? hljs.highlight(code, { language, ignoreIllegals: true }).value
       : escapeHtml(code);
-    // markdown-it wraps this in <pre><code ...>, keeping our data-line attr.
-    return html;
   },
 });
+
+md.use(footnote); // [^1]
+md.use(mark); // ==highlight==
+md.use(texmath, {
+  // $inline$ and $$block$$ math, rendered locally by KaTeX.
+  engine: katex,
+  delimiters: "dollars",
+  katexOptions: { throwOnError: false, trust: false, strict: "ignore", output: "htmlAndMathml" },
+});
+
+// ```mermaid blocks become placeholders that the preview renders lazily.
+const defaultFence = md.renderer.rules.fence!;
+md.renderer.rules.fence = (tokens, idx, options, env, self) => {
+  const token = tokens[idx];
+  if (token.info.trim().toLowerCase() === "mermaid") {
+    return `<div class="mermaid"${self.renderAttrs(token)}>${escapeHtml(token.content)}</div>\n`;
+  }
+  return defaultFence(tokens, idx, options, env, self);
+};
 
 // GitHub-style task lists: "- [ ] todo" / "- [x] done".
 md.core.ruler.after("inline", "task-lists", (state) => {
@@ -41,6 +72,58 @@ md.core.ruler.after("inline", "task-lists", (state) => {
     box.content = `<input type="checkbox" disabled${m[1] === " " ? "" : " checked"}> `;
     inline.children!.unshift(box);
     tokens[i - 2].attrJoin("class", "task-item");
+  }
+});
+
+/** Prefix for heading ids, so they can't collide with DOM properties
+ * (DOMPurify strips ids like "images" or "title"). */
+export const HEADING_ID_PREFIX = "h-";
+
+/** Finds the element a `#target` link points to. */
+export function findAnchor(root: ParentNode, target: string): Element | null {
+  const byId = (id: string) => root.querySelector(`[id="${CSS.escape(id)}"]`);
+  return byId(target) ?? byId(HEADING_ID_PREFIX + target) ?? byId(HEADING_ID_PREFIX + slugify(target));
+}
+
+// Heading ids so `#section` links (and the footnote links) can jump.
+md.core.ruler.after("inline", "heading-ids", (state) => {
+  const seen = new Map<string, number>();
+  const tokens = state.tokens;
+  for (let i = 0; i < tokens.length - 1; i++) {
+    if (tokens[i].type !== "heading_open") continue;
+    const base = slugify(tokens[i + 1].content) || "section";
+    const n = seen.get(base) ?? 0;
+    seen.set(base, n + 1);
+    tokens[i].attrSet("id", HEADING_ID_PREFIX + (n ? `${base}-${n}` : base));
+  }
+});
+
+// Obsidian/GitHub callouts:  > [!warning] Optional title
+const CALLOUT_GROUP: Record<string, string> = {
+  note: "info", info: "info", todo: "info",
+  tip: "ok", hint: "ok", important: "ok", success: "ok", check: "ok", done: "ok",
+  warning: "warn", caution: "warn", attention: "warn", question: "warn", help: "warn", faq: "warn",
+  danger: "bad", error: "bad", bug: "bad", failure: "bad", fail: "bad", missing: "bad",
+  example: "neutral", quote: "neutral", cite: "neutral", abstract: "neutral", summary: "neutral", tldr: "neutral",
+};
+md.core.ruler.after("block", "callouts", (state) => {
+  const tokens = state.tokens;
+  for (let i = 0; i < tokens.length - 2; i++) {
+    if (tokens[i].type !== "blockquote_open" || tokens[i + 1].type !== "paragraph_open") continue;
+    const inline = tokens[i + 2];
+    const m = /^\[!([\w-]+)\][+-]?[ \t]*([^\n]*)(?:\n|$)/.exec(inline.content);
+    if (!m) continue;
+    const type = m[1].toLowerCase();
+    const title = m[2].trim() || type.charAt(0).toUpperCase() + type.slice(1);
+    tokens[i].attrJoin("class", `callout callout-${CALLOUT_GROUP[type] ?? "info"}`);
+    const head = new state.Token("html_block", "", 0);
+    head.content = `<div class="callout-title">${escapeHtml(title)}</div>\n`;
+    inline.content = inline.content.slice(m[0].length);
+    if (inline.content.trim()) {
+      tokens.splice(i + 1, 0, head);
+    } else {
+      tokens.splice(i + 1, 3, head); // title only: drop the empty paragraph
+    }
   }
 });
 
@@ -72,12 +155,26 @@ md.core.ruler.push("source-lines", (state) => {
   }
 });
 
+// ------------------------------------------------------------ sanitizing
+
 DOMPurify.addHook("uponSanitizeElement", (node, data) => {
   // Only allow inputs that are (disabled) checkboxes from task lists.
   if (data.tagName === "input") {
     const el = node as Element;
     if (el.getAttribute("type") !== "checkbox") el.remove();
     else el.setAttribute("disabled", "");
+  }
+});
+
+// KaTeX positions glyphs with inline styles; keep those (inside .katex
+// only), but nothing that could load resources or overlay the app.
+DOMPurify.addHook("uponSanitizeAttribute", (node, data) => {
+  if (data.attrName !== "style") return;
+  const inKatex = (node as Element).closest?.(".katex, .katex-display");
+  if (inKatex && !/url\(|expression|fixed|absolute|@import|\\/i.test(data.attrValue)) {
+    data.forceKeepAttr = true;
+  } else {
+    data.keepAttr = false;
   }
 });
 
@@ -104,7 +201,7 @@ DOMPurify.addHook("afterSanitizeAttributes", (node) => {
 
 const PURIFY = {
   FORBID_TAGS: ["style", "form", "button", "textarea", "select", "iframe", "object", "embed"],
-  FORBID_ATTR: ["style", "srcset"],
+  FORBID_ATTR: ["srcset"],
   ALLOW_DATA_ATTR: false,
   ADD_ATTR: ["data-line", "loading"],
   // DOMPurify's default plus our attachment: and gnotes: schemes.
@@ -112,6 +209,17 @@ const PURIFY = {
     /^(?:(?:https?|mailto|tel|attachment|gnotes):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
 };
 
+// YAML front matter (--- ... --- at the very top) is shown as a properties
+// box instead of being parsed as Markdown.
+const FRONT_MATTER = /^---[ \t]*\r?\n([\s\S]*?)\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/;
+
 export function render(source: string): string {
-  return DOMPurify.sanitize(md.render(source), PURIFY) as string;
+  let head = "";
+  const fm = FRONT_MATTER.exec(source);
+  if (fm) {
+    head = `<div class="frontmatter" data-line="0"><div class="frontmatter-label">Properties</div><pre>${escapeHtml(fm[1])}</pre></div>\n`;
+    // Blank lines keep the source line numbers (scroll sync) intact.
+    source = "\n".repeat(fm[0].split("\n").length - 1) + source.slice(fm[0].length);
+  }
+  return DOMPurify.sanitize(head + md.render(source), PURIFY) as string;
 }
