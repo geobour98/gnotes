@@ -240,3 +240,24 @@ button.link:hover {
 .hljs-deletion {
   color: var(--danger);
 }
+
+/* ------------------------------------------------------------ attachments */
+
+.markdown .remote-image {
+  display: inline-block;
+  padding: 0.3em 0.6em;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 0.9em;
+}
+.markdown a.attachment-link {
+  background: var(--code-bg);
+  border-radius: 4px;
+  padding: 0.05em 0.35em;
+  text-decoration: none;
+}
+.markdown video,
+.markdown audio {
+  max-width: 100%;
+}

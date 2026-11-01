@@ -2,17 +2,21 @@
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { render } from "./markdown";
   import { describeLink, isOpenable, type LinkInfo } from "./links";
+  import { api, formatSize, type AttachmentMeta } from "./api";
 
   let {
     source,
     onscrollline,
     onrendered,
+    onattachment,
   }: {
     source: string;
     /** Fired on scroll with the 0-based (fractional) source line at the top. */
     onscrollline?: (line: number) => void;
     /** Fired after new content is laid out (e.g. to re-sync scrolling). */
     onrendered?: () => void;
+    /** An attachment link was clicked. */
+    onattachment?: (id: string) => void;
   } = $props();
   let html = $derived(render(source));
 
@@ -71,7 +75,14 @@
     requestAnimationFrame(() => onrendered?.());
   });
 
-  type Hover = { info: LinkInfo; title: string; x: number; y: number; above: boolean };
+  type Hover = {
+    info: LinkInfo;
+    title: string;
+    x: number;
+    y: number;
+    above: boolean;
+    attachment?: AttachmentMeta | null; // null = missing
+  };
   let hover = $state<Hover | null>(null);
   let tip = $state<HTMLDivElement>();
 
@@ -90,6 +101,13 @@
       y: above ? r.top - 6 : r.bottom + 6,
       above,
     };
+    const info = hover.info;
+    if (info.kind === "attachment") {
+      api
+        .attachmentMeta(info.id)
+        .then((m) => hover?.info === info && (hover.attachment = m))
+        .catch(() => hover?.info === info && (hover.attachment = null));
+    }
   }
 
   // Keep the tooltip inside the window horizontally once its width is known.
@@ -126,6 +144,8 @@
     const info = describeLink(href, a.textContent ?? "");
     if (isOpenable(info)) {
       openUrl(href).catch(console.error);
+    } else if (info.kind === "attachment") {
+      onattachment?.(info.id);
     } else if (info.kind === "anchor") {
       document.getElementById(info.target)?.scrollIntoView();
     }
@@ -174,6 +194,16 @@
     {:else if i.kind === "mail"}
       <div class="url"><span class="dim">Email </span><strong>{i.address}</strong></div>
       <div class="hint">Click to open in your mail app</div>
+    {:else if i.kind === "attachment"}
+      {#if hover.attachment}
+        <div class="url"><span class="dim">📎 </span><strong>{hover.attachment.name}</strong></div>
+        <div class="note">{hover.attachment.mime} · {formatSize(hover.attachment.size)}</div>
+        <div class="hint">Click to save a decrypted copy…</div>
+      {:else if hover.attachment === null}
+        <div class="alert">Attachment is missing from the vault</div>
+      {:else}
+        <div class="url dim">📎 Attachment…</div>
+      {/if}
     {:else if i.kind === "anchor"}
       <div class="url"><span class="dim">Jump to </span><strong>#{i.target}</strong></div>
     {:else}

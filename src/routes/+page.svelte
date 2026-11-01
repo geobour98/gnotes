@@ -1,7 +1,19 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { listen } from "@tauri-apps/api/event";
-  import { api, splitPath, joinPath, type Note, type NoteMeta, type Status, type Tree } from "$lib/api";
+  import { getCurrentWebview } from "@tauri-apps/api/webview";
+  import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+  import {
+    api,
+    attachmentMarkdown,
+    splitPath,
+    joinPath,
+    type AttachmentMeta,
+    type Note,
+    type NoteMeta,
+    type Status,
+    type Tree,
+  } from "$lib/api";
   import Unlock from "$lib/Unlock.svelte";
   import Sidebar from "$lib/Sidebar.svelte";
   import Editor from "$lib/Editor.svelte";
@@ -250,6 +262,65 @@
     });
   }
 
+  // ----------------------------------------------------------- attachments
+
+  function insertAttachments(metas: AttachmentMeta[]) {
+    if (!metas.length) return;
+    editorRef?.insertText(metas.map(attachmentMarkdown).join("\n") + "\n");
+    notify(metas.length === 1 ? `Attached ${metas[0].name}` : `Attached ${metas.length} files`);
+  }
+
+  /** Attachments go in at the editor cursor, so the editor must be visible. */
+  function canAttach(): boolean {
+    if (!current) {
+      notify("Open a note first to attach files");
+      return false;
+    }
+    if (mode === "preview") setMode("split");
+    return true;
+  }
+
+  async function attachPicked() {
+    if (!canAttach()) return;
+    const picked = await openDialog({ multiple: true, title: "Attach files" });
+    if (!picked) return;
+    await attempt(async () => insertAttachments(await api.attachmentAddPaths([picked].flat())));
+  }
+
+  async function attachPasted(files: File[]) {
+    await attempt(async () => {
+      const metas: AttachmentMeta[] = [];
+      for (const f of files) {
+        // Screenshots arrive as a generic "image.png"; give them a useful name.
+        let name = f.name || "pasted";
+        if (/^image\.\w+$/.test(name)) {
+          const stamp = new Date().toISOString().slice(0, 19).replace(/[-:]/g, "").replace("T", "-");
+          name = `Pasted image ${stamp}.${name.split(".").pop()}`;
+        }
+        metas.push(await api.attachmentAdd(name, f.type, new Uint8Array(await f.arrayBuffer())));
+      }
+      insertAttachments(metas);
+    });
+  }
+
+  async function attachDropped(paths: string[]) {
+    if (!paths.length || !status?.unlocked || !canAttach()) return;
+    // Let the editor mount if we just switched out of preview mode.
+    await new Promise(requestAnimationFrame);
+    await attempt(async () => insertAttachments(await api.attachmentAddPaths(paths)));
+  }
+
+  /** Clicking an attachment link saves a decrypted copy where the user chooses. */
+  async function saveAttachment(id: string) {
+    await attempt(async () => {
+      const meta = await api.attachmentMeta(id);
+      const path = await saveDialog({ title: "Save a decrypted copy", defaultPath: meta.name });
+      if (!path) return;
+      await api.attachmentSave(id, path);
+      notify(`Saved ${path}`);
+    });
+  }
+
   // ------------------------------------------------------- vault & settings
 
   async function backup() {
@@ -382,6 +453,9 @@
       onLocked();
       notify("Vault locked after inactivity");
     });
+    const unlistenDrop = getCurrentWebview().onDragDropEvent((e) => {
+      if (e.payload.type === "drop") attachDropped(e.payload.paths);
+    });
     const unlistenClose = listen("close-requested", () => {
       onCloseRequested().catch(() => api.quit());
     });
@@ -390,6 +464,7 @@
     return () => {
       unlisten.then((f) => f());
       unlistenClose.then((f) => f());
+      unlistenDrop.then((f) => f());
       window.removeEventListener("blur", onBlur);
       window.removeEventListener("wheel", onWheel);
     };
@@ -440,6 +515,7 @@
           </button>
           <span class="spacer"></span>
           <span class="save {saveState}">{saveLabel[saveState]}</span>
+          <button class="tool" title="Attach files (or paste / drop them)" onclick={attachPicked}>📎 Attach</button>
           {#if mode === "split"}
             <button
               class="sync"
@@ -463,6 +539,7 @@
                   doc={currentDraft()}
                   onchange={onEdit}
                   onscrollline={(l) => syncFrom("editor", l)}
+                  onpastefiles={attachPasted}
                 /></section>
             {/if}
           {/key}
@@ -472,6 +549,7 @@
                 source={previewSource}
                 onscrollline={(l) => syncFrom("preview", l)}
                 onrendered={() => syncFrom("editor")}
+                onattachment={saveAttachment}
               /></section>
           {/if}
         </div>
@@ -593,6 +671,11 @@
   }
   .pane.preview {
     overflow: hidden;
+  }
+  .tool {
+    font-size: 0.8rem;
+    padding: 0.2rem 0.55rem;
+    margin-right: 0.35rem;
   }
   .sync {
     font-size: 0.8rem;

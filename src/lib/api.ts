@@ -1,6 +1,6 @@
 // Typed wrappers around the Rust commands. This is the only way the UI
 // reaches the vault.
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 
 export interface NoteMeta {
   id: string;
@@ -15,6 +15,13 @@ export interface Note extends NoteMeta {
 export interface Tree {
   folders: string[];
   notes: NoteMeta[];
+}
+export interface AttachmentMeta {
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+  created: number;
 }
 export interface Status {
   unlocked: boolean;
@@ -36,6 +43,14 @@ export const api = {
     invoke<void>("change_password", { current, new: next }),
   backup: () => invoke<string>("backup_now"),
 
+  attachmentAdd: (name: string, mime: string, bytes: Uint8Array) =>
+    invoke<AttachmentMeta>("attachment_add", bytes, {
+      headers: { "x-name": encodeURIComponent(name), "x-mime": encodeURIComponent(mime) },
+    }),
+  attachmentAddPaths: (paths: string[]) => invoke<AttachmentMeta[]>("attachment_add_paths", { paths }),
+  attachmentMeta: (id: string) => invoke<AttachmentMeta>("attachment_meta", { id }),
+  attachmentSave: (id: string, path: string) => invoke<void>("attachment_save", { id, path }),
+
   tree: () => invoke<Tree>("tree"),
   folderCreate: (path: string) => invoke<void>("folder_create", { path }),
   folderRename: (old: string, next: string) => invoke<void>("folder_rename", { old, new: next }),
@@ -48,6 +63,27 @@ export const api = {
     invoke<NoteMeta>("note_move", { id, folder, title }),
   noteDelete: (id: string) => invoke<void>("note_delete", { id }),
 };
+
+/** URL the preview loads an attachment from (served from the unlocked vault). */
+export function attachmentUrl(id: string): string {
+  return convertFileSrc(id, "gnotes");
+}
+
+export const ATTACHMENT_ID = /^attachment:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
+
+/** Markdown that references an attachment. */
+export function attachmentMarkdown(m: AttachmentMeta): string {
+  const label = m.name.replace(/[[\]\\]/g, "\\$&");
+  return m.mime.startsWith("image/")
+    ? `![${label}](attachment:${m.id})`
+    : `[📎 ${label}](attachment:${m.id})`;
+}
+
+export function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
 
 /** Splits "a/b/Title" into folder "a/b" and title "Title". */
 export function splitPath(path: string): { folder: string; title: string } {

@@ -13,8 +13,11 @@
     doc,
     onchange,
     onscrollline,
+    onpastefiles,
   }: {
     doc: string;
+    /** Files pasted into the editor (e.g. a screenshot). */
+    onpastefiles?: (files: File[]) => void;
     onchange: (text: string) => void;
     /** Fired on scroll with the 0-based (fractional) line at the top. */
     onscrollline?: (line: number) => void;
@@ -80,6 +83,18 @@
     view.scrollDOM.scrollTop = docOffset(view) + block.top + (line - n) * block.height;
   }
 
+  /** Inserts text at the cursor (replacing any selection) and focuses. */
+  export function insertText(text: string) {
+    if (!view) return;
+    const { from, to } = view.state.selection.main;
+    view.dispatch({
+      changes: { from, to, insert: text },
+      selection: { anchor: from + text.length },
+      scrollIntoView: true,
+    });
+    view.focus();
+  }
+
   onMount(() => {
     view = new EditorView({
       parent: host,
@@ -93,6 +108,15 @@
           EditorView.lineWrapping,
           placeholder("Start writing…"),
           theme,
+          EditorView.domEventHandlers({
+            paste(e) {
+              const files = [...(e.clipboardData?.files ?? [])];
+              if (!files.length || !onpastefiles) return false;
+              e.preventDefault();
+              onpastefiles(files);
+              return true;
+            },
+          }),
           EditorView.updateListener.of((u) => {
             if (u.docChanged) onchange(u.state.doc.toString());
           }),

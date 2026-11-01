@@ -7,6 +7,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use gnotes_core::attachments::{self, AttachmentMeta};
 use gnotes_core::{Note, NoteMeta, Tree, Vault};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
@@ -275,6 +276,105 @@ fn backup_now(state: State<'_, AppState>) -> CmdResult<String> {
     })
 }
 
+// ---------------------------------------------------------------- attachments
+
+/// Decodes `%XX` escapes (used for file names sent in IPC headers).
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Adds an attachment from raw bytes (pasted images). The body is the file
+/// content; `x-name` / `x-mime` headers carry the metadata.
+#[tauri::command]
+fn attachment_add(state: State<'_, AppState>, request: tauri::ipc::Request<'_>) -> CmdResult<AttachmentMeta> {
+    let tauri::ipc::InvokeBody::Raw(data) = request.body() else {
+        return Err("expected raw file bytes".into());
+    };
+    let header = |k: &str| request.headers().get(k).and_then(|v| v.to_str().ok()).map(percent_decode);
+    let name = header("x-name").unwrap_or_else(|| "pasted".into());
+    let mime = header("x-mime");
+    state.with_vault(|v| v.add_attachment(&name, mime.as_deref(), data))
+}
+
+/// Adds files the user dropped onto the window or picked in a file dialog.
+#[tauri::command]
+async fn attachment_add_paths(state: State<'_, AppState>, paths: Vec<String>) -> CmdResult<Vec<AttachmentMeta>> {
+    let mut out = Vec::new();
+    for p in paths {
+        let path = PathBuf::from(&p);
+        let meta = fs::metadata(&path).map_err(|e| format!("{p}: {e}"))?;
+        if !meta.is_file() {
+            return Err(format!("{p}: not a file"));
+        }
+        if meta.len() as usize > attachments::MAX_SIZE {
+            return Err(format!("{p}: larger than {} MB", attachments::MAX_SIZE >> 20));
+        }
+        let data = tauri::async_runtime::spawn_blocking(move || fs::read(path))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| format!("{p}: {e}"))?;
+        let name = PathBuf::from(&p).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        out.push(state.with_vault(|v| v.add_attachment(&name, None, &data))?);
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+fn attachment_meta(state: State<'_, AppState>, id: String) -> CmdResult<AttachmentMeta> {
+    state.with_vault(|v| v.attachment_meta(&id))
+}
+
+/// Writes a decrypted copy of an attachment to a path the user chose.
+#[tauri::command]
+fn attachment_save(state: State<'_, AppState>, id: String, path: String) -> CmdResult<()> {
+    let (_, data) = state.with_vault(|v| v.attachment(&id))?;
+    fs::write(&path, data).map_err(|e| format!("{path}: {e}"))
+}
+
+/// Serves attachments to the preview at `gnotes://localhost/<id>` (Linux,
+/// macOS) or `http://gnotes.localhost/<id>` (Windows) straight from the
+/// unlocked vault: decrypted bytes never touch the disk.
+fn serve_attachment(app: &AppHandle, path: &str) -> tauri::http::Response<Vec<u8>> {
+    use tauri::http::{Response, StatusCode, header};
+    let id = path.trim_start_matches('/');
+    let found = if attachments::is_valid_id(id) {
+        let state = app.state::<AppState>();
+        let guard = state.vault.lock().unwrap();
+        guard.as_ref().and_then(|v| v.attachment(id).ok())
+    } else {
+        None
+    };
+    match found {
+        Some((meta, data)) => {
+            // Only media is rendered inline; anything else is opaque bytes.
+            let inline = ["image/", "audio/", "video/"].iter().any(|p| meta.mime.starts_with(p));
+            let mime = if inline { meta.mime.as_str() } else { "application/octet-stream" };
+            Response::builder()
+                .header(header::CONTENT_TYPE, mime)
+                .header(header::CACHE_CONTROL, "no-store")
+                .header("X-Content-Type-Options", "nosniff")
+                .header(header::CONTENT_SECURITY_POLICY, "default-src 'none'; style-src 'unsafe-inline'; sandbox")
+                .body(data)
+                .unwrap()
+        }
+        None => Response::builder().status(StatusCode::NOT_FOUND).body(Vec::new()).unwrap(),
+    }
+}
+
 // ------------------------------------------------------------- notes & folders
 
 #[tauri::command]
@@ -346,6 +446,12 @@ fn spawn_auto_lock(app: AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .register_asynchronous_uri_scheme_protocol("gnotes", |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            let path = request.uri().path().to_string();
+            std::thread::spawn(move || responder.respond(serve_attachment(&app, &path)));
+        })
         .setup(|app| {
             let config = load_config(app.handle());
             app.manage(AppState {
@@ -375,6 +481,10 @@ pub fn run() {
             set_auto_lock,
             change_password,
             backup_now,
+            attachment_add,
+            attachment_add_paths,
+            attachment_meta,
+            attachment_save,
             tree,
             folder_create,
             folder_rename,

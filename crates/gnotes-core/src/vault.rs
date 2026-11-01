@@ -14,7 +14,7 @@ use crate::error::{Error, Result};
 use crate::paths;
 
 /// Current schema version, stored in `PRAGMA user_version`.
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 const SCHEMA_V1: &str = "
 CREATE TABLE folders (
@@ -36,6 +36,19 @@ CREATE TABLE meta (
     key   TEXT PRIMARY KEY NOT NULL,
     value TEXT NOT NULL
 ) WITHOUT ROWID;
+";
+
+/// v2: files embedded in notes (images, PDFs, ...), referenced from note
+/// bodies as `attachment:<id>`.
+const SCHEMA_V2: &str = "
+CREATE TABLE attachments (
+    id      TEXT PRIMARY KEY NOT NULL,
+    name    TEXT NOT NULL,
+    mime    TEXT NOT NULL,
+    size    INTEGER NOT NULL,
+    data    BLOB NOT NULL,
+    created INTEGER NOT NULL
+);
 ";
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -63,13 +76,13 @@ pub struct Tree {
 }
 
 pub struct Vault {
-    conn: Connection,
+    pub(crate) conn: Connection,
     path: PathBuf,
     salt: [u8; SALT_LEN],
     key: Zeroizing<[u8; KEY_LEN]>,
 }
 
-fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
@@ -158,6 +171,8 @@ impl Vault {
         let conn = open_keyed(&path, &key, &salt, false)?;
         let mut vault = Vault { conn, path, salt, key };
         vault.migrate()?;
+        // Attachments whose references were removed in an earlier session.
+        vault.prune_attachments()?;
         Ok(vault)
     }
 
@@ -174,6 +189,12 @@ impl Vault {
             let tx = self.conn.transaction()?;
             tx.execute_batch(SCHEMA_V1)?;
             tx.execute_batch("PRAGMA user_version = 1;")?;
+            tx.commit()?;
+        }
+        if version < 2 {
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(SCHEMA_V2)?;
+            tx.execute_batch("PRAGMA user_version = 2;")?;
             tx.commit()?;
         }
         Ok(())

@@ -4,6 +4,7 @@ export type LinkInfo =
   | { kind: "web"; scheme: string; host: string; rest: string; idn: boolean; mismatch: string | null }
   | { kind: "mail"; address: string }
   | { kind: "anchor"; target: string }
+  | { kind: "attachment"; id: string }
   | { kind: "unsupported"; href: string };
 
 const DOMAIN_LIKE = /^(https?:\/\/)?([a-z0-9-]+\.)+[a-z]{2,}(:\d+)?([/?#]\S*)?$/i;
@@ -28,6 +29,8 @@ function claimedHost(text: string, actualHost: string): string | null {
 }
 
 export function describeLink(href: string, text: string): LinkInfo {
+  const att = /^attachment:([0-9a-f-]{36})$/.exec(href);
+  if (att) return { kind: "attachment", id: att[1] };
   if (href.startsWith("#")) {
     return { kind: "anchor", target: decodeURIComponent(href.slice(1)) };
   }

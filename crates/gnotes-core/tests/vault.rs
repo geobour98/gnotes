@@ -111,3 +111,38 @@ fn folders_and_notes() {
     v.delete_note(&x.id).unwrap();
     assert!(matches!(v.get_note(&x.id), Err(Error::NotFound(_))));
 }
+
+#[test]
+fn attachments_roundtrip_and_prune() {
+    let dir = tmp();
+    let path = dir.path().join("v.gnotes");
+    let mut v = Vault::create(&path, "pw").unwrap();
+    let png = b"\x89PNG\r\n\x1a\nATTACHMENT_PLAINTEXT_MARKER";
+    let a = v.add_attachment("../shot.png", None, png).unwrap();
+    assert_eq!((a.name.as_str(), a.mime.as_str(), a.size), ("shot.png", "image/png", png.len() as i64));
+    let unused = v.add_attachment("x.pdf", None, b"pdf").unwrap();
+
+    let n = v.create_note("", Some("n")).unwrap();
+    v.save_note(&n.id, &format!("![s](attachment:{})", a.id)).unwrap();
+    let (meta, data) = v.attachment(&a.id).unwrap();
+    assert_eq!((meta, data.as_slice()), (a.clone(), &png[..]));
+    drop(v);
+
+    // Encrypted at rest.
+    let bytes = std::fs::read(&path).unwrap();
+    assert!(!bytes.windows(12).any(|w| w == b"ATTACHMENT_P"));
+
+    // Reopening prunes the unreferenced one only.
+    let v = Vault::open(&path, "pw").unwrap();
+    assert!(v.attachment_meta(&a.id).is_ok());
+    assert!(matches!(v.attachment_meta(&unused.id), Err(Error::NotFound(_))));
+    assert_eq!(v.attachments().unwrap().len(), 1);
+}
+
+#[test]
+fn attachment_size_limit() {
+    let dir = tmp();
+    let mut v = Vault::create(dir.path().join("v.gnotes"), "pw").unwrap();
+    let big = vec![0u8; gnotes_core::attachments::MAX_SIZE + 1];
+    assert!(matches!(v.add_attachment("big.bin", None, &big), Err(Error::TooLarge(_))));
+}

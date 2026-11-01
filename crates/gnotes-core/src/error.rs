@@ -16,6 +16,8 @@ pub enum Error {
     AlreadyExists(String),
     #[error("vault was created by a newer gnotes version (schema {0})")]
     UnsupportedSchema(i64),
+    #[error("file too large: {0}")]
+    TooLarge(String),
     #[error("crypto error: {0}")]
     Crypto(String),
     #[error("database error: {0}")]
