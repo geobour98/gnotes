@@ -1,0 +1,16 @@
+[workspace]
+resolver = "3"
+members = ["src-tauri", "crates/gnotes-core"]
+
+# Argon2 is unusably slow without optimizations; keep dev builds fast to unlock.
+[profile.dev.package.argon2]
+opt-level = 3
+[profile.dev.package.blake2]
+opt-level = 3
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

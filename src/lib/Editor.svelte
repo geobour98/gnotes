@@ -1,0 +1,82 @@
+<script lang="ts">
+  import { onMount, onDestroy } from "svelte";
+  import { EditorView, keymap, placeholder } from "@codemirror/view";
+  import { EditorState } from "@codemirror/state";
+  import { basicSetup } from "codemirror";
+  import { indentWithTab } from "@codemirror/commands";
+  import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
+  import { languages } from "@codemirror/language-data";
+  import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+  import { tags as t } from "@lezer/highlight";
+
+  let { doc, onchange }: { doc: string; onchange: (text: string) => void } = $props();
+
+  let host: HTMLDivElement;
+  let view: EditorView | undefined;
+
+  // Colors come from CSS variables so light/dark themes just work.
+  const highlight = HighlightStyle.define([
+    { tag: t.heading1, fontSize: "1.5em", fontWeight: "700", color: "var(--heading)" },
+    { tag: t.heading2, fontSize: "1.3em", fontWeight: "700", color: "var(--heading)" },
+    { tag: t.heading3, fontSize: "1.15em", fontWeight: "700", color: "var(--heading)" },
+    { tag: [t.heading4, t.heading5, t.heading6], fontWeight: "700", color: "var(--heading)" },
+    { tag: t.strong, fontWeight: "700" },
+    { tag: t.emphasis, fontStyle: "italic" },
+    { tag: t.strikethrough, textDecoration: "line-through" },
+    { tag: [t.link, t.url], color: "var(--accent)" },
+    { tag: t.monospace, fontFamily: "var(--mono)", color: "var(--code)" },
+    { tag: [t.processingInstruction, t.contentSeparator, t.meta], color: "var(--muted)" },
+    { tag: t.quote, color: "var(--muted)", fontStyle: "italic" },
+    { tag: t.keyword, color: "var(--syn-keyword)" },
+    { tag: [t.string, t.special(t.string)], color: "var(--syn-string)" },
+    { tag: [t.number, t.bool, t.null], color: "var(--syn-number)" },
+    { tag: t.comment, color: "var(--muted)", fontStyle: "italic" },
+    { tag: [t.function(t.variableName), t.typeName, t.className], color: "var(--syn-fn)" },
+  ]);
+
+  const theme = EditorView.theme({
+    "&": { height: "100%", backgroundColor: "transparent", color: "var(--fg)" },
+    ".cm-scroller": { fontFamily: "var(--editor-font)", lineHeight: "1.6", padding: "1rem 0" },
+    ".cm-content": { maxWidth: "52rem", margin: "0 auto", padding: "0 1.5rem", caretColor: "var(--accent)" },
+    ".cm-gutters": { display: "none" },
+    ".cm-activeLine": { backgroundColor: "transparent" },
+    "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": {
+      backgroundColor: "var(--selection) !important",
+    },
+    ".cm-cursor": { borderLeftColor: "var(--accent)" },
+    "&.cm-focused": { outline: "none" },
+  });
+
+  onMount(() => {
+    view = new EditorView({
+      parent: host,
+      state: EditorState.create({
+        doc,
+        extensions: [
+          basicSetup,
+          keymap.of([indentWithTab]),
+          markdown({ base: markdownLanguage, codeLanguages: languages }),
+          syntaxHighlighting(highlight),
+          EditorView.lineWrapping,
+          placeholder("Start writing…"),
+          theme,
+          EditorView.updateListener.of((u) => {
+            if (u.docChanged) onchange(u.state.doc.toString());
+          }),
+        ],
+      }),
+    });
+    view.focus();
+  });
+
+  onDestroy(() => view?.destroy());
+</script>
+
+<div class="editor" bind:this={host}></div>
+
+<style>
+  .editor {
+    height: 100%;
+    overflow: hidden;
+  }
+</style>
