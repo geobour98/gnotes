@@ -75,9 +75,23 @@
     previewTimer = setTimeout(() => (previewSource = draft), 120);
   }
 
+  let inflight: Promise<void> | null = null;
+
+  /** Saves pending edits now; waits for a save that is already running. */
   async function flush() {
     clearTimeout(saveTimer);
+    while (inflight) await inflight;
     if (!current || saveState !== "dirty") return;
+    inflight = save();
+    try {
+      await inflight;
+    } finally {
+      inflight = null;
+    }
+  }
+
+  async function save() {
+    if (!current) return;
     const id = current.id;
     const body = draft;
     saveState = "saving";
@@ -205,8 +219,29 @@
     });
   }
 
+  /** Saves until nothing is pending (typing may continue during a save). */
+  async function flushAll() {
+    do await flush();
+    while (saveState === "dirty");
+  }
+
+  /** Window close button: save, then let the backend lock and exit. */
+  async function onCloseRequested() {
+    await api.quitAck();
+    await flushAll();
+    if (saveState === "error") {
+      const quit = await confirmDanger(
+        "Your latest changes could not be saved",
+        "If you quit now, they will be lost.",
+        "Quit anyway",
+      );
+      if (!quit) return;
+    }
+    await api.quit();
+  }
+
   async function lock() {
-    await flush();
+    await flushAll();
     await api.lock();
     onLocked();
   }
@@ -274,10 +309,14 @@
       onLocked();
       notify("Vault locked after inactivity");
     });
+    const unlistenClose = listen("close-requested", () => {
+      onCloseRequested().catch(() => api.quit());
+    });
     const onBlur = () => flush();
     window.addEventListener("blur", onBlur);
     return () => {
       unlisten.then((f) => f());
+      unlistenClose.then((f) => f());
       window.removeEventListener("blur", onBlur);
     };
   });

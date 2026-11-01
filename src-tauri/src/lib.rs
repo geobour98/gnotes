@@ -4,11 +4,12 @@
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use gnotes_core::{Note, NoteMeta, Tree, Vault};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
 use zeroize::Zeroizing;
 
 type CmdResult<T> = Result<T, String>;
@@ -30,9 +31,21 @@ struct AppState {
     vault: Mutex<Option<Vault>>,
     last_activity: Mutex<Instant>,
     config: Mutex<Config>,
+    /// Set once we are really quitting, so the next close isn't intercepted.
+    quitting: AtomicBool,
+    /// Bumped on every close request; lets a stale fallback timer notice
+    /// that a newer request superseded it.
+    close_gen: AtomicU64,
+    /// The UI confirmed it received the close request and is handling it.
+    close_acked: AtomicBool,
 }
 
 impl AppState {
+    /// Drops the vault: closes the database and zeroizes the key.
+    fn lock_vault(&self) -> bool {
+        self.vault.lock().unwrap().take().is_some()
+    }
+
     fn touch(&self) {
         *self.last_activity.lock().unwrap() = Instant::now();
     }
@@ -162,7 +175,59 @@ async fn vault_unlock(app: AppHandle, state: State<'_, AppState>, path: String, 
 
 #[tauri::command]
 fn vault_lock(state: State<'_, AppState>) {
-    state.vault.lock().unwrap().take();
+    state.lock_vault();
+}
+
+// ------------------------------------------------------------------ quitting
+
+/// Locks the vault and exits. Called by the UI once pending edits are saved.
+fn quit(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    state.quitting.store(true, Ordering::SeqCst);
+    let _was_unlocked = state.lock_vault();
+    #[cfg(debug_assertions)]
+    eprintln!("[gnotes] quitting; vault was unlocked: {_was_unlocked}, now locked");
+    app.exit(0);
+}
+
+/// The window's close button was pressed. While a vault is unlocked, keep
+/// the window open and let the UI save first; it then calls `app_quit`.
+fn on_close_requested(app: &AppHandle, api: &tauri::CloseRequestApi) {
+    let state = app.state::<AppState>();
+    if state.quitting.load(Ordering::SeqCst) || state.vault.lock().unwrap().is_none() {
+        state.quitting.store(true, Ordering::SeqCst);
+        #[cfg(debug_assertions)]
+        eprintln!("[gnotes] close with vault locked; exiting");
+        return; // nothing decrypted: close normally
+    }
+    api.prevent_close();
+    let generation = state.close_gen.fetch_add(1, Ordering::SeqCst) + 1;
+    state.close_acked.store(false, Ordering::SeqCst);
+    let _ = app.emit("close-requested", ());
+
+    // If the UI is unresponsive, don't hang: lock and exit anyway.
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(3));
+        let state = app.state::<AppState>();
+        if state.close_gen.load(Ordering::SeqCst) == generation && !state.close_acked.load(Ordering::SeqCst) {
+            #[cfg(debug_assertions)]
+            eprintln!("[gnotes] UI did not answer the close request; forcing lock + exit");
+            quit(&app);
+        }
+    });
+}
+
+#[tauri::command]
+fn quit_ack(state: State<'_, AppState>) {
+    #[cfg(debug_assertions)]
+    eprintln!("[gnotes] close request received by UI; saving");
+    state.close_acked.store(true, Ordering::SeqCst);
+}
+
+#[tauri::command]
+fn app_quit(app: AppHandle) {
+    quit(&app);
 }
 
 /// Called by the UI on user activity so reading (without saving) still
@@ -269,8 +334,7 @@ fn spawn_auto_lock(app: AppHandle) {
             }
             let idle = state.last_activity.lock().unwrap().elapsed();
             if idle >= Duration::from_secs(minutes * 60) {
-                let locked = state.vault.lock().unwrap().take().is_some();
-                if locked {
+                if state.lock_vault() {
                     let _ = app.emit("vault-locked", ());
                 }
             }
@@ -288,15 +352,25 @@ pub fn run() {
                 vault: Mutex::new(None),
                 last_activity: Mutex::new(Instant::now()),
                 config: Mutex::new(config),
+                quitting: AtomicBool::new(false),
+                close_gen: AtomicU64::new(0),
+                close_acked: AtomicBool::new(false),
             });
             spawn_auto_lock(app.handle().clone());
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                on_close_requested(window.app_handle(), api);
+            }
         })
         .invoke_handler(tauri::generate_handler![
             vault_status,
             vault_create,
             vault_unlock,
             vault_lock,
+            quit_ack,
+            app_quit,
             activity,
             set_auto_lock,
             change_password,
@@ -311,6 +385,15 @@ pub fn run() {
             note_move,
             note_delete,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running gnotes");
+        .build(tauri::generate_context!())
+        .expect("error while building gnotes")
+        .run(|app, event| {
+            // Covers every exit path (e.g. Ctrl+Q from the OS, app.exit):
+            // drop the vault so the key is zeroized.
+            if let RunEvent::Exit = event {
+                if let Some(state) = app.try_state::<AppState>() {
+                    state.lock_vault();
+                }
+            }
+        });
 }
