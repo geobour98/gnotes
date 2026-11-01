@@ -7,6 +7,7 @@
   import Editor from "$lib/Editor.svelte";
   import Preview from "$lib/Preview.svelte";
   import Modal, { ask, askSecret, confirmDanger } from "$lib/Modal.svelte";
+  import { restoreZoom, stepZoom, zoomKey } from "$lib/zoom";
 
   type Mode = "edit" | "split" | "preview";
   const MODES: Mode[] = ["edit", "split", "preview"];
@@ -333,7 +334,34 @@
     }
   }
 
+  async function zoom(direction: -1 | 0 | 1) {
+    try {
+      notify(`Zoom ${Math.round((await stepZoom(direction)) * 100)}%`);
+    } catch (e) {
+      notify(`Zoom failed: ${e}`);
+    }
+  }
+
+  // Ctrl+wheel zooms; it must be non-passive to stop the page scrolling.
+  // Wheel deltas arrive in bursts (touchpads), so step at most every 120 ms.
+  let lastWheelZoom = 0;
+  function onWheel(e: WheelEvent) {
+    if (!(e.ctrlKey || e.metaKey) || e.deltaY === 0) return;
+    e.preventDefault();
+    const now = Date.now();
+    if (now - lastWheelZoom < 120) return;
+    lastWheelZoom = now;
+    zoom(e.deltaY < 0 ? 1 : -1);
+  }
+
   function onKeydown(e: KeyboardEvent) {
+    // Zoom works everywhere, including the unlock screen.
+    const z = zoomKey(e);
+    if (z !== null) {
+      e.preventDefault();
+      zoom(z);
+      return;
+    }
     if (!status?.unlocked || !(e.ctrlKey || e.metaKey)) return;
     const k = e.key.toLowerCase();
     if (e.shiftKey) {
@@ -348,6 +376,8 @@
 
   onMount(() => {
     refreshStatus();
+    restoreZoom().catch(() => {});
+    window.addEventListener("wheel", onWheel, { passive: false });
     const unlisten = listen("vault-locked", () => {
       onLocked();
       notify("Vault locked after inactivity");
@@ -361,6 +391,7 @@
       unlisten.then((f) => f());
       unlistenClose.then((f) => f());
       window.removeEventListener("blur", onBlur);
+      window.removeEventListener("wheel", onWheel);
     };
   });
 
@@ -448,7 +479,7 @@
         <div class="empty">
           <p>Select a note or create one.</p>
           <button class="primary" onclick={newNote}>New note</button>
-          <p class="keys">Ctrl+N new · Ctrl+E switch view · Ctrl+S save · Ctrl+Shift+S scroll sync · Ctrl+L lock</p>
+          <p class="keys">Ctrl+N new · Ctrl+E switch view · Ctrl+S save · Ctrl+Shift+S scroll sync · Ctrl+L lock · Ctrl +/−/0 zoom</p>
         </div>
       {/if}
     </main>
