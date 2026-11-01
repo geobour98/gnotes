@@ -133,12 +133,58 @@
   // Scroll doesn't bubble and the scrolling element is our parent pane,
   // so listen in the capture phase for any scroll.
   $effect(() => {
-    const hide = () => (hover = null);
+    const hide = () => ((hover = null), (menu = null));
     document.addEventListener("scroll", hide, true);
     return () => document.removeEventListener("scroll", hide, true);
   });
 
   // Never let the webview navigate away; open external links in the browser.
+  // ------------------------------------------------------ right-click menu
+  // Replaces the webview's own menu on images and links (its "open in new
+  // window" would navigate the app away).
+
+  type Menu = { x: number; y: number; items: { label: string; run: () => void }[] };
+  let menu = $state<Menu | null>(null);
+  let menuEl = $state<HTMLDivElement>();
+
+  function oncontextmenu(e: MouseEvent) {
+    const target = e.target instanceof Element ? e.target : null;
+    const img = target?.closest<HTMLElement>("img[data-attachment]");
+    const link = linkFrom(target);
+    if (!img && !link) return;
+    e.preventDefault();
+    hover = null;
+    const items: Menu["items"] = [];
+    const imageId = img?.dataset.attachment;
+    if (imageId) items.push({ label: "Save image as…", run: () => onattachment?.(imageId) });
+    if (link) {
+      const href = link.getAttribute("href") ?? "";
+      const info = describeLink(href, "");
+      if (info.kind === "attachment") {
+        if (info.id !== imageId) items.push({ label: "Save attachment as…", run: () => onattachment?.(info.id) });
+      } else if (isOpenable(info)) {
+        items.push({ label: "Open in browser", run: () => openUrl(href).catch(console.error) });
+        items.push({
+          label: info.kind === "mail" ? "Copy email address" : "Copy link address",
+          run: () => navigator.clipboard.writeText(info.kind === "mail" ? info.address : href).catch(console.error),
+        });
+      }
+    }
+    menu = items.length ? { x: e.clientX, y: e.clientY, items } : null;
+  }
+
+  // Keep the menu inside the window once its size is known.
+  $effect(() => {
+    if (!menu || !menuEl) return;
+    const r = menuEl.getBoundingClientRect();
+    if (r.right > window.innerWidth - 8) menuEl.style.left = `${window.innerWidth - r.width - 8}px`;
+    if (r.bottom > window.innerHeight - 8) menuEl.style.top = `${window.innerHeight - r.height - 8}px`;
+  });
+
+  function closeMenu(e?: Event) {
+    if (menu && !(e?.target instanceof Node && menuEl?.contains(e.target))) menu = null;
+  }
+
   function onclick(e: MouseEvent) {
     const a = linkFrom(e.target);
     if (!a) return;
@@ -162,6 +208,7 @@
   class="markdown"
   bind:this={article}
   {onclick}
+  {oncontextmenu}
   onmouseover={onover}
   onmouseout={onout}
   onfocusin={onover}
@@ -171,7 +218,26 @@
 </article>
 </div>
 
-<svelte:window onblur={() => (hover = null)} />
+<svelte:window
+  onblur={() => ((hover = null), (menu = null))}
+  onmousedown={closeMenu}
+  onkeydown={(e) => e.key === "Escape" && (menu = null)}
+/>
+
+{#if menu}
+  {@const m = menu}
+  <div class="ctx-menu" role="menu" bind:this={menuEl} style:left="{m.x}px" style:top="{m.y}px">
+    {#each m.items as item (item.label)}
+      <button
+        role="menuitem"
+        onclick={() => {
+          menu = null;
+          item.run();
+        }}>{item.label}</button
+      >
+    {/each}
+  </div>
+{/if}
 
 {#if hover}
   {@const i = hover.info}
@@ -218,6 +284,29 @@
 {/if}
 
 <style>
+  .ctx-menu {
+    position: fixed;
+    z-index: 60;
+    min-width: 11rem;
+    padding: 0.3rem;
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 10px 30px rgb(0 0 0 / 0.3);
+  }
+  .ctx-menu button {
+    display: block;
+    width: 100%;
+    border: none;
+    background: none;
+    text-align: left;
+    padding: 0.4rem 0.6rem;
+    font-size: 0.88rem;
+    border-radius: 5px;
+  }
+  .ctx-menu button:hover {
+    background: var(--hover);
+  }
   .scroller {
     height: 100%;
     overflow: auto;

@@ -185,7 +185,10 @@ DOMPurify.addHook("afterSanitizeAttributes", (node) => {
     if (!value?.startsWith("attachment:")) continue;
     const m = ATTACHMENT_ID.exec(value);
     if (!m) node.removeAttribute(attr);
-    else if (attr === "src") node.setAttribute("src", attachmentUrl(m[1]));
+    else if (attr === "src") {
+      node.setAttribute("src", attachmentUrl(m[1]));
+      node.setAttribute("data-attachment", m[1]); // for the right-click menu
+    }
     else node.classList.add("attachment-link");
   }
 });
