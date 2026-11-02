@@ -8,7 +8,9 @@
     danger?: boolean;
     secret?: boolean;
     alert?: boolean; // only an OK button
-    resolve: (v: string | null) => void;
+    suggestions?: string[]; // autocomplete values for the text field
+    check?: { label: string; value: boolean }; // optional checkbox
+    resolve: (v: string | null, checked: boolean) => void;
   };
   let current = $state<Req | null>(null);
 
@@ -23,6 +25,24 @@
       current = { title, message, confirm: "OK", alert: true, resolve: () => resolve() };
     });
   }
+  /** Asks where to import a folder: a destination path plus "wrap in new folder". */
+  export function askImportTarget(
+    sourceName: string,
+    folders: string[],
+    initial: string,
+  ): Promise<{ into: string; newFolder: boolean } | null> {
+    return new Promise((resolve) => {
+      current = {
+        title: `Import “${sourceName}” into…`,
+        message: "Destination folder (empty = top level). A folder that doesn't exist yet is created.",
+        input: initial,
+        suggestions: folders,
+        check: { label: `Put it in a new folder named “${sourceName}”`, value: true },
+        confirm: "Import",
+        resolve: (v, checked) => resolve(v === null ? null : { into: v.trim().replace(/^\/+|\/+$/g, ""), newFolder: checked }),
+      };
+    });
+  }
   export function confirmDanger(title: string, message: string, confirm = "Delete"): Promise<boolean> {
     return new Promise((resolve) => {
       current = { title, message, confirm, danger: true, resolve: (v) => resolve(v !== null) };
@@ -32,11 +52,13 @@
 
 <script lang="ts">
   let value = $state("");
+  let checked = $state(false);
   let field = $state<HTMLInputElement>();
 
   $effect(() => {
     if (current) {
       value = current.input ?? "";
+      checked = current.check?.value ?? false;
       queueMicrotask(() => {
         field?.focus();
         field?.select();
@@ -47,7 +69,7 @@
   function done(ok: boolean) {
     const req = current;
     current = null;
-    req?.resolve(ok ? (req.input !== undefined ? value : "") : null);
+    req?.resolve(ok ? (req.input !== undefined ? value : "") : null, checked);
   }
 </script>
 
@@ -70,8 +92,21 @@
         {#if current.secret}
           <input bind:this={field} bind:value type="password" autocomplete="off" />
         {:else}
-          <input bind:this={field} bind:value spellcheck="false" />
+          <input
+            bind:this={field}
+            bind:value
+            spellcheck="false"
+            list={current.suggestions ? "modal-suggestions" : undefined}
+          />
+          {#if current.suggestions}
+            <datalist id="modal-suggestions">
+              {#each current.suggestions as s (s)}<option value={s}></option>{/each}
+            </datalist>
+          {/if}
         {/if}
+      {/if}
+      {#if current.check}
+        <label class="check"><input type="checkbox" bind:checked /> {current.check.label}</label>
       {/if}
       <div class="row">
         {#if !current.alert}
@@ -115,6 +150,17 @@
   input {
     width: 100%;
     margin-bottom: 1rem;
+  }
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: -0.25rem 0 1rem;
+    font-size: 0.9rem;
+  }
+  .check input {
+    width: auto;
+    margin: 0;
   }
   .row {
     display: flex;

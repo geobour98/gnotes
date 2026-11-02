@@ -289,8 +289,13 @@ async fn export_markdown(state: State<'_, AppState>, parent: String) -> CmdResul
 
 /// Imports a folder of Markdown files (Obsidian vault, Joplin export, ...).
 #[tauri::command]
-async fn import_folder(state: State<'_, AppState>, path: String) -> CmdResult<ImportReport> {
-    state.with_vault(|v| v.import_dir(std::path::Path::new(&path)))
+async fn import_folder(
+    state: State<'_, AppState>,
+    path: String,
+    into: String,
+    new_folder: bool,
+) -> CmdResult<ImportReport> {
+    state.with_vault(|v| v.import_dir(std::path::Path::new(&path), &into, new_folder))
 }
 
 /// Links notes' references to files in a folder (e.g. a shared `img/`)

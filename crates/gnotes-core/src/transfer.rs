@@ -417,9 +417,14 @@ impl Importer<'_> {
 
 impl Vault {
     /// Imports a folder of Markdown files (and the files they reference) into
-    /// a new vault folder named after it. Everything happens in one
-    /// transaction: on a fatal error nothing is imported.
-    pub fn import_dir(&mut self, src_dir: &Path) -> Result<ImportReport> {
+    /// vault folder `into` ("" = top level, created if missing). With
+    /// `new_folder`, everything goes into a new subfolder named after the
+    /// source; otherwise it is merged into `into` (clashing titles get a
+    /// number). Everything happens in one transaction: on a fatal error
+    /// nothing is imported.
+    pub fn import_dir(&mut self, src_dir: &Path, into: &str, new_folder: bool) -> Result<ImportReport> {
+        let into = into.trim().trim_matches('/');
+        paths::validate_folder(into)?;
         let root = src_dir.canonicalize().map_err(|_| Error::NotFound(src_dir.display().to_string()))?;
         if !root.is_dir() {
             return Err(Error::NotFound(format!("{} is not a folder", root.display())));
@@ -429,14 +434,21 @@ impl Vault {
             return Err(Error::NotFound("no Markdown (.md) files in that folder".into()));
         }
 
-        let existing: HashSet<String> = self.tree()?.folders.into_iter().collect();
-        let base = sanitize_segment(&root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
-        let top = unique(&base, |n| existing.contains(n));
+        let tree = self.tree()?;
+        let existing: HashSet<String> = tree.folders.into_iter().collect();
+        let top = if new_folder {
+            let base = sanitize_segment(&root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
+            unique(&paths::join(into, &base), |n| existing.contains(n))
+        } else {
+            into.to_string()
+        };
+        // Titles already in the vault, so merged notes never collide.
+        let mut titles: HashSet<(String, String)> = tree.notes.into_iter().map(|n| (n.folder, n.title)).collect();
+        let mut imported_notes = 0;
 
         let tx = self.conn.transaction()?;
         let mut imp = Importer { conn: &tx, src: &src, imported: HashMap::new(), warnings: Vec::new(), links: 0 };
         let mut folders: HashSet<String> = HashSet::new();
-        let mut titles: HashSet<(String, String)> = HashSet::new();
 
         for note in &src.notes {
             let rel_dir = note.parent().and_then(|d| d.strip_prefix(&root).ok()).unwrap_or(Path::new(""));
@@ -471,10 +483,11 @@ impl Vault {
                 "INSERT INTO notes(id, folder, title, body, created, updated) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
                 params![uuid::Uuid::new_v4().to_string(), folder, title, body, modified],
             )?;
+            imported_notes += 1;
         }
         let report = ImportReport {
             folder: top,
-            notes: titles.len(),
+            notes: imported_notes,
             attachments: imp.imported.len(),
             warnings: imp.warnings,
         };

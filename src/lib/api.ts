@@ -61,7 +61,8 @@ export const api = {
   backup: () => invoke<string>("backup_now"),
 
   exportMarkdown: (parent: string) => invoke<ExportReport>("export_markdown", { parent }),
-  importFolder: (path: string) => invoke<ImportReport>("import_folder", { path }),
+  importFolder: (path: string, into: string, newFolder: boolean) =>
+    invoke<ImportReport>("import_folder", { path, into, newFolder }),
   linkFilesFromFolder: (path: string) => invoke<LinkReport>("link_files_from_folder", { path }),
 
   attachmentAdd: (name: string, mime: string, bytes: Uint8Array) =>

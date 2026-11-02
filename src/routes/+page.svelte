@@ -19,7 +19,7 @@
   import Sidebar from "$lib/Sidebar.svelte";
   import Editor from "$lib/Editor.svelte";
   import Preview from "$lib/Preview.svelte";
-  import Modal, { ask, askSecret, confirmDanger, showInfo } from "$lib/Modal.svelte";
+  import Modal, { ask, askImportTarget, askSecret, confirmDanger, showInfo } from "$lib/Modal.svelte";
   import { restoreZoom, stepZoom, zoomKey } from "$lib/zoom";
 
   type Mode = "edit" | "split" | "preview";
@@ -349,13 +349,17 @@
   async function importFolder() {
     const dir = await openDialog({ directory: true, title: "Import a folder of Markdown files" });
     if (!dir || Array.isArray(dir)) return;
+    const sourceName = dir.split(/[\\/]/).filter(Boolean).pop() ?? "Imported";
+    const target = await askImportTarget(sourceName, tree.folders, selectedFolder);
+    if (!target) return;
     await attempt(async () => {
       notify("Importing…");
       await flushAll();
-      const r = await api.importFolder(dir);
+      const r = await api.importFolder(dir, target.into, target.newFolder);
       await loadTree();
       selectedFolder = r.folder;
-      const msg = `Imported ${r.notes} notes and ${r.attachments} attachments into “${r.folder}”.`;
+      const where = r.folder ? `“${r.folder}”` : "the top level";
+      const msg = `Imported ${r.notes} notes and ${r.attachments} attachments into ${where}.`;
       if (r.warnings.length) {
         const shown = r.warnings.slice(0, 200);
         const more = r.warnings.length > shown.length ? `\n… and ${r.warnings.length - shown.length} more` : "";

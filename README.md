@@ -41,7 +41,9 @@ Vault menu (bottom of the sidebar):
 - **Import Markdown folder…**: any folder of `.md` files, including Obsidian
   vaults (`![[image.png]]` embeds resolved by name, `.obsidian/` skipped) and
   Joplin Markdown exports (`_resources/`). Referenced images and files become
-  encrypted attachments. Imported into a new folder named after the source.
+  encrypted attachments. You choose the destination folder (any depth, created
+  if missing) and whether to wrap it in a new folder named after the source or
+  merge into the destination (clashing titles get a number).
 - **Import images from folder…**: for notes already in the vault whose image
   links point to a shared folder (e.g. `img/`). Every referenced file found
   there (matched by file name, any subfolder) is copied into the vault once and all links to

@@ -172,7 +172,7 @@ fn export_then_import_roundtrip() {
 
     // Re-import into a fresh vault: links become attachment: references again.
     let mut w = Vault::create(dir.path().join("w.gnotes"), "pw").unwrap();
-    let rep = w.import_dir(&out).unwrap();
+    let rep = w.import_dir(&out, "", true).unwrap();
     assert_eq!((rep.folder.as_str(), rep.notes, rep.attachments), ("export", 2, 2));
     assert!(rep.warnings.is_empty(), "{:?}", rep.warnings);
     let t = w.tree().unwrap();
@@ -187,7 +187,7 @@ fn export_then_import_roundtrip() {
     // Same file referenced from two notes is stored once.
     assert_eq!(w.attachments().unwrap().len(), 2);
     // Importing again goes into "export 2".
-    assert_eq!(w.import_dir(&out).unwrap().folder, "export 2");
+    assert_eq!(w.import_dir(&out, "", true).unwrap().folder, "export 2");
 }
 
 #[test]
@@ -214,7 +214,7 @@ fn import_obsidian_style_vault() {
     fs::write(src.join("bad:name?.md"), "x").unwrap();
 
     let mut v = Vault::create(dir.path().join("v.gnotes"), "pw").unwrap();
-    let rep = v.import_dir(&src).unwrap();
+    let rep = v.import_dir(&src, "", true).unwrap();
     assert_eq!((rep.folder.as_str(), rep.notes, rep.attachments), ("My Vault", 3, 2));
     assert_eq!(rep.warnings.len(), 1, "{:?}", rep.warnings);
     assert!(rep.warnings[0].contains("nope.png"));
@@ -282,4 +282,37 @@ fn link_shared_image_folder() {
     // Running it again changes nothing.
     let again = v.link_files_from_dir(&img).unwrap();
     assert_eq!((again.notes, again.links, again.attachments), (0, 0, 0));
+}
+
+#[test]
+fn import_into_chosen_folder() {
+    let dir = tmp();
+    let src = dir.path().join("Old Vault");
+    fs::create_dir_all(src.join("sub")).unwrap();
+    fs::write(src.join("Plan.md"), "new plan").unwrap();
+    fs::write(src.join("sub/Deep.md"), "deep").unwrap();
+
+    let mut v = Vault::create(dir.path().join("v.gnotes"), "pw").unwrap();
+    v.create_folder("Work/Projects").unwrap();
+    let mine = v.create_note("Work/Projects", Some("Plan")).unwrap();
+    v.save_note(&mine.id, "my plan").unwrap();
+
+    // Into a nested folder, wrapped in a new "Old Vault" folder.
+    let r = v.import_dir(&src, "Work/Projects", true).unwrap();
+    assert_eq!((r.folder.as_str(), r.notes), ("Work/Projects/Old Vault", 2));
+    // Into a folder that doesn't exist yet: created with its parents.
+    let r = v.import_dir(&src, "/Archive/2025/", true).unwrap();
+    assert_eq!(r.folder, "Archive/2025/Old Vault");
+    // Merged directly: the clashing title gets a number, mine is untouched.
+    let r = v.import_dir(&src, "Work/Projects", false).unwrap();
+    assert_eq!((r.folder.as_str(), r.notes), ("Work/Projects", 2));
+    let t = v.tree().unwrap();
+    for f in ["Archive", "Archive/2025", "Archive/2025/Old Vault", "Work/Projects/Old Vault/sub", "Work/Projects/sub"] {
+        assert!(t.folders.iter().any(|x| x == f), "missing folder {f}: {:?}", t.folders);
+    }
+    let in_projects: Vec<_> = t.notes.iter().filter(|n| n.folder == "Work/Projects").map(|n| n.title.as_str()).collect();
+    assert!(in_projects.contains(&"Plan") && in_projects.contains(&"Plan 2"), "{in_projects:?}");
+    assert_eq!(v.get_note(&mine.id).unwrap().body, "my plan");
+    // Invalid destination is rejected before anything is written.
+    assert!(v.import_dir(&src, "a/../b", true).is_err());
 }
