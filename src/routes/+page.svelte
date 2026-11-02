@@ -11,12 +11,14 @@
     type AttachmentMeta,
     type Note,
     type NoteMeta,
+    type SearchHit,
     type Status,
     type Tree,
   } from "$lib/api";
   import Unlock from "$lib/Unlock.svelte";
   import { toggleFenceWrap } from "$lib/markdown";
   import Sidebar from "$lib/Sidebar.svelte";
+  import Search from "$lib/Search.svelte";
   import Editor from "$lib/Editor.svelte";
   import Preview from "$lib/Preview.svelte";
   import Modal, { ask, askImportTarget, askSecret, confirmDanger, showInfo } from "$lib/Modal.svelte";
@@ -36,6 +38,10 @@
   let editorRef = $state<ReturnType<typeof Editor>>();
   let previewRef = $state<ReturnType<typeof Preview>>();
   let toast = $state("");
+  let searching = $state(false);
+  let searchRef = $state<ReturnType<typeof Search>>();
+  // Line the preview should show once the note it belongs to has rendered.
+  let pendingPreviewLine: number | null = null;
 
   // Latest editor text; kept outside $state so typing doesn't re-render the page.
   let draft = "";
@@ -183,6 +189,38 @@
     current = note;
     draft = previewSource = note.body;
     saveState = "saved";
+  }
+
+  /** Opens a search result, scrolled to (and selecting) the matching line. */
+  async function openSearchHit(hit: SearchHit, line: number | null, terms: string[]) {
+    await attempt(async () => {
+      const same = current?.id === hit.id;
+      if (!same) pendingPreviewLine = line;
+      await openNote(hit);
+      if (line === null) return;
+      await tick();
+      requestAnimationFrame(() => {
+        editorRef?.revealLine(line, terms);
+        if (same) previewRef?.scrollToLine(line);
+      });
+    });
+  }
+
+  function onPreviewRendered() {
+    if (pendingPreviewLine !== null && previewRef) {
+      const line = pendingPreviewLine;
+      pendingPreviewLine = null;
+      // Hold off the editor→preview sync while the preview jumps.
+      driver = "jump";
+      clearTimeout(driverTimer);
+      driverTimer = setTimeout(() => (driver = null), 250);
+      previewRef.scrollToLine(line);
+    } else syncFrom("editor");
+  }
+
+  function toggleSearch(on = !searching) {
+    searching = on;
+    if (on) requestAnimationFrame(() => searchRef?.focus());
   }
 
   async function newNote() {
@@ -555,6 +593,7 @@
     const k = e.key.toLowerCase();
     if (e.shiftKey) {
       if (k === "s") (e.preventDefault(), toggleSync());
+      else if (k === "f") (e.preventDefault(), toggleSearch(true));
       return;
     }
     if (k === "n") (e.preventDefault(), newNote());
@@ -613,10 +652,25 @@
       <header class="side-head">
         <span class="brand">gnotes</span>
         <span class="spacer"></span>
+        <button
+          class="icon"
+          class:on={searching}
+          aria-pressed={searching}
+          title="Search notes (Ctrl+Shift+F)"
+          onclick={() => toggleSearch()}>⌕</button
+        >
         <button class="icon" title="New note (Ctrl+N)" onclick={newNote}>＋</button>
         <button class="icon" title="New folder" onclick={newFolder}>▤</button>
       </header>
+      <Search
+        bind:this={searchRef}
+        visible={searching}
+        selectedId={current?.id ?? null}
+        onopen={openSearchHit}
+        onclose={() => toggleSearch(false)}
+      />
       <Sidebar
+        hidden={searching}
         {tree}
         selectedId={current?.id ?? null}
         bind:selectedFolder
@@ -693,7 +747,7 @@
                 bind:this={previewRef}
                 source={previewSource}
                 onscrollline={(l) => syncFrom("preview", l)}
-                onrendered={() => syncFrom("editor")}
+                onrendered={onPreviewRendered}
                 onattachment={saveAttachment}
                 ontogglewrap={toggleCodeWrap}
               /></section>
@@ -703,7 +757,7 @@
         <div class="empty">
           <p>Select a note or create one.</p>
           <button class="primary" onclick={newNote}>New note</button>
-          <p class="keys">Ctrl+N new · Ctrl+E switch view · Ctrl+S save · Ctrl+Shift+S scroll sync · Ctrl+L lock · Ctrl +/−/0 zoom</p>
+          <p class="keys">Ctrl+N new · Ctrl+Shift+F search · Ctrl+E switch view · Ctrl+S save · Ctrl+Shift+S scroll sync · Ctrl+L lock · Ctrl +/−/0 zoom</p>
         </div>
       {/if}
     </main>
@@ -746,6 +800,9 @@
   }
   .icon {
     padding: 0.15rem 0.5rem;
+  }
+  .icon.on {
+    background: var(--selection);
   }
   .side-foot {
     display: flex;

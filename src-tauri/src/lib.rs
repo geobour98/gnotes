@@ -9,7 +9,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use gnotes_core::attachments::{self, AttachmentMeta};
 use gnotes_core::transfer::{ExportReport, ImportReport, LinkReport};
-use gnotes_core::{Note, NoteMeta, Tree, Vault};
+use gnotes_core::{Note, NoteMeta, SearchResults, Tree, Vault};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
 use zeroize::Zeroizing;
@@ -431,6 +431,12 @@ fn note_create(state: State<'_, AppState>, folder: String, title: Option<String>
     state.with_vault(|v| v.create_note(&folder, title.as_deref()))
 }
 
+/// Runs off the main thread so a large vault never stalls the window.
+#[tauri::command(async)]
+fn search(state: State<'_, AppState>, query: String) -> CmdResult<SearchResults> {
+    state.with_vault(|v| v.search(&query))
+}
+
 #[tauri::command]
 fn note_get(state: State<'_, AppState>, id: String) -> CmdResult<Note> {
     state.with_vault(|v| v.get_note(&id))
@@ -523,6 +529,7 @@ pub fn run() {
             folder_delete,
             note_create,
             note_get,
+            search,
             note_save,
             note_move,
             note_delete,

@@ -316,3 +316,37 @@ fn import_into_chosen_folder() {
     // Invalid destination is rejected before anything is written.
     assert!(v.import_dir(&src, "a/../b", true).is_err());
 }
+
+#[test]
+fn search_matches_all_terms_case_insensitively() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut v = Vault::create(dir.path().join("v.gnotes"), "pw").unwrap();
+    v.create_folder("work").unwrap();
+    let a = v.create_note("work", Some("Rust notes")).unwrap();
+    v.save_note(&a.id, "intro\nThe Borrow checker is strict\nnothing here\nborrow again").unwrap();
+    let b = v.create_note("", Some("Cooking")).unwrap();
+    v.save_note(&b.id, "borrow a cup of sugar").unwrap();
+    let c = v.create_note("", Some("Other")).unwrap();
+    v.save_note(&c.id, "unrelated").unwrap();
+
+    let r = v.search("BORROW").unwrap();
+    assert_eq!(r.total, 2);
+    assert_eq!(r.hits[0].id, a.id, "more matching lines ranks first");
+    assert_eq!(r.hits[0].line_count, 2);
+    assert_eq!(r.hits[0].lines[0].line, 1);
+    assert_eq!(r.hits[0].lines[0].text, "The Borrow checker is strict");
+
+    // Every term must match, in the title/folder or body.
+    let r = v.search("borrow rust").unwrap();
+    assert_eq!(r.hits.len(), 1);
+    assert!(r.hits[0].title_match);
+    assert_eq!(v.search("work sugar").unwrap().total, 0);
+    assert_eq!(v.search("\"cup of sugar\"").unwrap().hits[0].id, b.id);
+    assert_eq!(v.search("\"sugar cup\"").unwrap().total, 0);
+
+    // Title matches rank above body-only matches.
+    let r = v.search("other").unwrap();
+    assert_eq!(r.hits[0].id, c.id);
+    assert!(r.hits[0].lines.is_empty());
+    assert_eq!(v.search("   ").unwrap().total, 0);
+}

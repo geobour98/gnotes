@@ -80,6 +80,28 @@
     if (view) view.scrollDOM.scrollTop = edge === "top" ? 0 : view.scrollDOM.scrollHeight;
   }
 
+  /**
+   * Centers 0-based `line`, selects the first of `terms` found on it (or
+   * puts the cursor at its start) and focuses the editor.
+   */
+  export function revealLine(line: number, terms: string[] = []) {
+    if (!view) return;
+    const text = view.state.doc;
+    const l = text.line(Math.min(Math.max(Math.floor(line), 0), text.lines - 1) + 1);
+    let from = l.from;
+    let to = l.from;
+    const lower = l.text.toLowerCase();
+    if (lower.length === l.text.length) {
+      let best = -1;
+      for (const term of terms) {
+        const i = lower.indexOf(term);
+        if (i >= 0 && (best < 0 || i < best)) [best, from, to] = [i, l.from + i, l.from + i + term.length];
+      }
+    }
+    view.dispatch({ selection: { anchor: from, head: to }, effects: EditorView.scrollIntoView(from, { y: "center" }) });
+    view.focus();
+  }
+
   export function scrollToLine(line: number) {
     if (!view) return;
     const text = view.state.doc;

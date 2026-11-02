@@ -4,6 +4,7 @@
   type FolderNode = { path: string; name: string; folders: FolderNode[]; notes: NoteMeta[] };
 
   let {
+    hidden = false,
     tree,
     selectedId,
     selectedFolder = $bindable(""),
@@ -13,6 +14,8 @@
     onrenameFolder,
     ondeleteFolder,
   }: {
+    /** Kept mounted while the search panel is shown, so expanded folders survive. */
+    hidden?: boolean;
     tree: Tree;
     selectedId: string | null;
     selectedFolder: string;
@@ -72,7 +75,7 @@
   let root = $derived(build(tree, filter));
 </script>
 
-<div class="sidebar">
+<div class="sidebar" {hidden}>
   <input class="filter" placeholder="Filter notes…" bind:value={filter} spellcheck="false" />
   <div class="items" role="tree">
     {@render folder(root, 0)}
@@ -136,6 +139,9 @@
     flex-direction: column;
     height: 100%;
     min-height: 0;
+  }
+  .sidebar[hidden] {
+    display: none;
   }
   .filter {
     margin: 0.5rem;

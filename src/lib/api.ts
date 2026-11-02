@@ -40,6 +40,21 @@ export interface LinkReport {
   links: number;
   warnings: string[];
 }
+export interface LineMatch {
+  /** 0-based line number in the note body. */
+  line: number;
+  text: string;
+}
+export interface SearchHit extends NoteMeta {
+  title_match: boolean;
+  lines: LineMatch[];
+  line_count: number;
+}
+export interface SearchResults {
+  hits: SearchHit[];
+  total: number;
+  terms: string[];
+}
 export interface Status {
   unlocked: boolean;
   vault_path: string;
@@ -84,6 +99,7 @@ export const api = {
   noteMove: (id: string, folder: string, title: string) =>
     invoke<NoteMeta>("note_move", { id, folder, title }),
   noteDelete: (id: string) => invoke<void>("note_delete", { id }),
+  search: (query: string) => invoke<SearchResults>("search", { query }),
 };
 
 /** URL the preview loads an attachment from (served from the unlocked vault). */
