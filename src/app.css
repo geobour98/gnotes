@@ -355,3 +355,40 @@ button.link:hover {
 .markdown blockquote.callout > :last-child {
   margin-bottom: 0;
 }
+
+/* -------------------------------------------------------- code block tools */
+
+.markdown pre {
+  position: relative;
+}
+.markdown pre.wrap code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.markdown .code-tools {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  display: flex;
+  gap: 0.25rem;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.markdown pre:hover .code-tools,
+.markdown .code-tools:focus-within {
+  opacity: 1;
+}
+.markdown .code-tools button {
+  font-family: var(--sans);
+  font-size: 0.72rem;
+  padding: 0.1rem 0.45rem;
+  background: var(--bg-elev);
+  color: var(--muted);
+}
+.markdown .code-tools button:hover {
+  color: var(--fg);
+}
+.markdown .code-tools button.on {
+  color: var(--accent);
+  border-color: var(--accent);
+}

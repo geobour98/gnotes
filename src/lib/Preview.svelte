@@ -10,6 +10,7 @@
     onscrollline,
     onrendered,
     onattachment,
+    ontogglewrap,
   }: {
     source: string;
     /** Fired on scroll with the 0-based (fractional) source line at the top. */
@@ -18,7 +19,44 @@
     onrendered?: () => void;
     /** An attachment link was clicked. */
     onattachment?: (id: string) => void;
+    /** The wrap button of the code block starting at this source line was clicked. */
+    ontogglewrap?: (line: number) => void;
   } = $props();
+
+  /** Hover buttons on code blocks (added after each render). */
+  function addCodeTools(root: HTMLElement) {
+    for (const pre of root.querySelectorAll<HTMLPreElement>("pre")) {
+      const code = pre.querySelector<HTMLElement>(":scope > code[data-line]");
+      if (!code || pre.querySelector(":scope > .code-tools")) continue;
+      const wrapped = pre.classList.contains("wrap");
+      const tools = document.createElement("div");
+      tools.className = "code-tools";
+      tools.innerHTML =
+        `<button data-code-action="wrap" class="${wrapped ? "on" : ""}" title="${wrapped ? "Stop wrapping long lines" : "Wrap long lines"} (saved in the note)">${wrapped ? "Wrap ✓" : "Wrap"}</button>` +
+        `<button data-code-action="copy" title="Copy code">Copy</button>`;
+      pre.prepend(tools);
+    }
+  }
+
+  /** Handles clicks on the code block buttons; returns true if it did. */
+  function onCodeTool(e: MouseEvent): boolean {
+    const btn = e.target instanceof Element ? e.target.closest<HTMLElement>("[data-code-action]") : null;
+    const code = btn?.closest("pre")?.querySelector<HTMLElement>(":scope > code[data-line]");
+    if (!btn || !code) return false;
+    e.preventDefault();
+    if (btn.dataset.codeAction === "wrap") {
+      ontogglewrap?.(Number(code.dataset.line));
+    } else {
+      navigator.clipboard.writeText(code.textContent ?? "").then(
+        () => {
+          btn.textContent = "Copied ✓";
+          setTimeout(() => (btn.textContent = "Copy"), 1200);
+        },
+        () => (btn.textContent = "Copy failed"),
+      );
+    }
+    return true;
+  }
   let html = $derived(render(source));
 
   // ---------------------------------------------------- scroll sync support
@@ -75,7 +113,10 @@
     anchors = null;
     requestAnimationFrame(() => {
       onrendered?.();
-      if (article) renderMermaid(article).catch(console.error);
+      if (article) {
+        addCodeTools(article);
+        renderMermaid(article).catch(console.error);
+      }
     });
   });
 
@@ -186,6 +227,7 @@
   }
 
   function onclick(e: MouseEvent) {
+    if (onCodeTool(e)) return;
     const a = linkFrom(e.target);
     if (!a) return;
     e.preventDefault();

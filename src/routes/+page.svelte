@@ -15,6 +15,7 @@
     type Tree,
   } from "$lib/api";
   import Unlock from "$lib/Unlock.svelte";
+  import { toggleFenceWrap } from "$lib/markdown";
   import Sidebar from "$lib/Sidebar.svelte";
   import Editor from "$lib/Editor.svelte";
   import Preview from "$lib/Preview.svelte";
@@ -260,6 +261,19 @@
       if (selectedFolder === path || selectedFolder.startsWith(path + "/")) selectedFolder = "";
       await loadTree();
     });
+  }
+
+  /** Wrap button on a code block: toggles `wrap` on its fence line. */
+  function toggleCodeWrap(line: number) {
+    const lines = draft.split("\n");
+    const next = toggleFenceWrap(lines[line] ?? "");
+    if (next === null) return;
+    if (editorRef) {
+      editorRef.replaceLine(line, next); // goes through onEdit (save + preview)
+    } else {
+      lines[line] = next;
+      onEdit(lines.join("\n"));
+    }
   }
 
   // ----------------------------------------------------------- attachments
@@ -663,6 +677,7 @@
                 onscrollline={(l) => syncFrom("preview", l)}
                 onrendered={() => syncFrom("editor")}
                 onattachment={saveAttachment}
+                ontogglewrap={toggleCodeWrap}
               /></section>
           {/if}
         </div>

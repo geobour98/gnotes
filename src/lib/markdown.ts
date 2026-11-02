@@ -49,13 +49,33 @@ md.use(texmath, {
 
 // ```mermaid blocks become placeholders that the preview renders lazily.
 const defaultFence = md.renderer.rules.fence!;
+// A `wrap` word in the fence info (```bash wrap) soft-wraps that block;
+// other Markdown tools ignore the extra word.
 md.renderer.rules.fence = (tokens, idx, options, env, self) => {
   const token = tokens[idx];
-  if (token.info.trim().toLowerCase() === "mermaid") {
+  const words = token.info.trim().toLowerCase().split(/\s+/);
+  if (words[0] === "mermaid") {
     return `<div class="mermaid"${self.renderAttrs(token)}>${escapeHtml(token.content)}</div>\n`;
   }
-  return defaultFence(tokens, idx, options, env, self);
+  const html = defaultFence(tokens, idx, options, env, self);
+  return words.includes("wrap") ? html.replace(/^<pre>/, '<pre class="wrap">') : html;
 };
+
+/**
+ * Toggles the `wrap` word on a code fence line, e.g. "```bash" <-> "```bash wrap".
+ * Returns null if the line isn't an opening fence.
+ */
+export function toggleFenceWrap(line: string): string | null {
+  const m = /^(.*?)(`{3,}|~{3,})(.*)$/.exec(line);
+  if (!m || (m[2][0] === "`" && m[3].includes("`"))) return null;
+  const words = m[3].trim().split(/\s+/).filter(Boolean);
+  const i = words.findIndex((w) => w.toLowerCase() === "wrap");
+  if (i >= 0) words.splice(i, 1);
+  else words.push("wrap");
+  // No language: "``` wrap", so it doesn't read like a language name.
+  const info = words.join(" ");
+  return m[1] + m[2] + (words[0]?.toLowerCase() === "wrap" ? " " : "") + info;
+}
 
 // GitHub-style task lists: "- [ ] todo" / "- [x] done".
 md.core.ruler.after("inline", "task-lists", (state) => {

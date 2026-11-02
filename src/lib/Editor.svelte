@@ -95,6 +95,13 @@
     view.focus();
   }
 
+  /** Replaces one line (0-based) without moving the cursor. */
+  export function replaceLine(line: number, text: string) {
+    if (!view || line < 0 || line >= view.state.doc.lines) return;
+    const l = view.state.doc.line(line + 1);
+    view.dispatch({ changes: { from: l.from, to: l.to, insert: text } });
+  }
+
   onMount(() => {
     view = new EditorView({
       parent: host,
