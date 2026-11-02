@@ -23,7 +23,29 @@
     ondeleteFolder: (path: string) => void;
   } = $props();
 
-  let collapsed = $state<Record<string, boolean>>({});
+  // Folders start collapsed; this holds the ones the user opened.
+  let expanded = $state<Record<string, boolean>>({});
+
+  /** Opens every folder on the path to (and including) `folder`. */
+  function reveal(folder: string) {
+    if (!folder) return;
+    let path = "";
+    for (const seg of folder.split("/")) {
+      path = path ? `${path}/${seg}` : seg;
+      expanded[path] = true;
+    }
+  }
+
+  // Keep the open note visible, e.g. a new note or one created by import.
+  $effect(() => {
+    const note = tree.notes.find((n) => n.id === selectedId);
+    if (note) reveal(note.folder);
+  });
+  // A folder selected from outside (e.g. after an import): show where it is.
+  $effect(() => {
+    const i = selectedFolder.lastIndexOf("/");
+    if (i > 0) reveal(selectedFolder.slice(0, i));
+  });
   let filter = $state("");
 
   function build(t: Tree, q: string): FolderNode {
@@ -60,7 +82,7 @@
 {#snippet folder(node: FolderNode, depth: number)}
   {#each node.folders as f (f.path)}
     {#if !filter || hasNotes(f)}
-      {@const open = filter ? true : !collapsed[f.path]}
+      {@const open = filter ? true : !!expanded[f.path]}
       <div
         class="row folder"
         class:active={selectedFolder === f.path}
@@ -71,9 +93,9 @@
         tabindex="0"
         onclick={() => {
           selectedFolder = f.path;
-          collapsed[f.path] = open;
+          expanded[f.path] = !open;
         }}
-        onkeydown={(e) => e.key === "Enter" && (collapsed[f.path] = open)}
+        onkeydown={(e) => e.key === "Enter" && (expanded[f.path] = !open)}
       >
         <span class="chev" class:open>›</span>
         <span class="name">{f.name}</span>
