@@ -75,6 +75,11 @@
   }
 
   /** Scrolls so the given fractional 0-based line is at the top. */
+  /** Jumps to the very top or bottom (the cursor stays where it is). */
+  export function scrollToEdge(edge: "top" | "bottom") {
+    if (view) view.scrollDOM.scrollTop = edge === "top" ? 0 : view.scrollDOM.scrollHeight;
+  }
+
   export function scrollToLine(line: number) {
     if (!view) return;
     const text = view.state.doc;

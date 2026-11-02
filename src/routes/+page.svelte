@@ -74,7 +74,8 @@
   // events from the pane we moved programmatically are ignored, which
   // prevents the two panes from fighting each other.
 
-  let driver: "editor" | "preview" | null = null;
+  // "jump" = the top/bottom buttons moved both panes; sync stays out of it.
+  let driver: "editor" | "preview" | "jump" | null = null;
   let driverTimer: ReturnType<typeof setTimeout> | undefined;
 
   function toggleSync() {
@@ -84,6 +85,15 @@
     } catch {}
     if (syncScroll) syncFrom("editor");
     notify(syncScroll ? "Scroll sync on" : "Scroll sync off");
+  }
+
+  /** Top/bottom buttons: move both panes to the edge, with sync paused. */
+  function jumpTo(edge: "top" | "bottom") {
+    driver = "jump";
+    clearTimeout(driverTimer);
+    driverTimer = setTimeout(() => (driver = null), 250);
+    editorRef?.scrollToEdge(edge);
+    previewRef?.scrollToEdge(edge);
   }
 
   function syncFrom(source: "editor" | "preview", line?: number) {
@@ -663,6 +673,10 @@
           </div>
         </header>
         <div class="panes {mode}">
+          <div class="jump" role="group" aria-label="Jump">
+            <button title="Go to top" aria-label="Go to top" onclick={() => jumpTo("top")}>↑</button>
+            <button title="Go to bottom" aria-label="Go to bottom" onclick={() => jumpTo("bottom")}>↓</button>
+          </div>
           {#key current.id}
             {#if mode !== "preview"}
               <section class="pane edit"><Editor
@@ -825,7 +839,32 @@
   .seg button.on {
     background: var(--selection);
   }
+  .jump {
+    position: absolute;
+    right: 1.1rem;
+    bottom: 1.1rem;
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    opacity: 0.55;
+    transition: opacity 0.15s;
+  }
+  .jump:hover,
+  .jump:focus-within {
+    opacity: 1;
+  }
+  .jump button {
+    width: 2.1rem;
+    height: 2.1rem;
+    padding: 0;
+    border-radius: 50%;
+    font-size: 1rem;
+    line-height: 1;
+    box-shadow: 0 2px 8px rgb(0 0 0 / 0.15);
+  }
   .panes {
+    position: relative;
     flex: 1;
     display: grid;
     min-height: 0;
@@ -871,7 +910,9 @@
   .toast {
     position: fixed;
     bottom: 1rem;
-    right: 1rem;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 30;
     max-width: 32rem;
     background: var(--bg-elev);
     border: 1px solid var(--border);

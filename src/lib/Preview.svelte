@@ -97,6 +97,11 @@
     return scroller ? interpolate(getAnchors(), scroller.scrollTop, "top") : 0;
   }
 
+  /** Jumps to the very top or bottom. */
+  export function scrollToEdge(edge: "top" | "bottom") {
+    if (scroller) scroller.scrollTop = edge === "top" ? 0 : scroller.scrollHeight;
+  }
+
   export function scrollToLine(line: number) {
     if (scroller) scroller.scrollTop = interpolate(getAnchors(), line, "line");
   }
