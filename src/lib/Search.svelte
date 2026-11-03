@@ -6,11 +6,13 @@
   import { api, type SearchHit, type SearchResults } from "./api";
 
   let {
+    query = $bindable(""),
     visible,
     selectedId,
     onopen,
     onclose,
   }: {
+    query?: string;
     visible: boolean;
     selectedId: string | null;
     /** Open a note, optionally at a 0-based line, highlighting `terms`. */
@@ -18,7 +20,6 @@
     onclose: () => void;
   } = $props();
 
-  let query = $state("");
   let results = $state<SearchResults | null>(null);
   let error = $state("");
   let input = $state<HTMLInputElement>();
@@ -45,6 +46,12 @@
   function onInput() {
     clearTimeout(timer);
     timer = setTimeout(run, 200);
+  }
+
+  /** Replaces the query and searches right away (e.g. a clicked tag). */
+  export function setQuery(q: string) {
+    query = q;
+    run();
   }
 
   /** Focuses the box and selects its text (Ctrl+Shift+F). */
@@ -121,7 +128,7 @@
           ? `${results.total} notes (showing ${results.hits.length})`
           : `${results.total} note${results.total === 1 ? "" : "s"}`}
     {:else}
-      All words must match. Use "quotes" for a phrase.
+      All words must match. Use "quotes" for a phrase, #tag for a tag.
     {/if}
   </div>
   {#if results}

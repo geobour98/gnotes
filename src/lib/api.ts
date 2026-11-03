@@ -54,6 +54,12 @@ export interface SearchResults {
   hits: SearchHit[];
   total: number;
   terms: string[];
+  tags: string[];
+}
+export interface TagCount {
+  tag: string;
+  /** Notes with this tag or one nested under it. */
+  count: number;
 }
 export interface Status {
   unlocked: boolean;
@@ -100,6 +106,7 @@ export const api = {
     invoke<NoteMeta>("note_move", { id, folder, title }),
   noteDelete: (id: string) => invoke<void>("note_delete", { id }),
   search: (query: string) => invoke<SearchResults>("search", { query }),
+  tags: () => invoke<TagCount[]>("tags"),
 };
 
 /** URL the preview loads an attachment from (served from the unlocked vault). */

@@ -11,6 +11,7 @@
     onrendered,
     onattachment,
     ontogglewrap,
+    ontag,
   }: {
     source: string;
     /** Fired on scroll with the 0-based (fractional) source line at the top. */
@@ -21,6 +22,8 @@
     onattachment?: (id: string) => void;
     /** The wrap button of the code block starting at this source line was clicked. */
     ontogglewrap?: (line: number) => void;
+    /** A #tag was clicked. */
+    ontag?: (tag: string) => void;
   } = $props();
 
   /** Hover buttons on code blocks (added after each render). */
@@ -233,6 +236,11 @@
 
   function onclick(e: MouseEvent) {
     if (onCodeTool(e)) return;
+    const tagEl = e.target instanceof Element ? e.target.closest<HTMLElement>("[data-tag]") : null;
+    if (tagEl?.dataset.tag && !tagEl.closest("a[href]")) {
+      ontag?.(tagEl.dataset.tag);
+      return;
+    }
     const a = linkFrom(e.target);
     if (!a) return;
     e.preventDefault();

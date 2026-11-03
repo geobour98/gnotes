@@ -9,7 +9,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use gnotes_core::attachments::{self, AttachmentMeta};
 use gnotes_core::transfer::{ExportReport, ImportReport, LinkReport};
-use gnotes_core::{Note, NoteMeta, SearchResults, Tree, Vault};
+use gnotes_core::{Note, NoteMeta, SearchResults, TagCount, Tree, Vault};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
 use zeroize::Zeroizing;
@@ -437,6 +437,11 @@ fn search(state: State<'_, AppState>, query: String) -> CmdResult<SearchResults>
     state.with_vault(|v| v.search(&query))
 }
 
+#[tauri::command(async)]
+fn tags(state: State<'_, AppState>) -> CmdResult<Vec<TagCount>> {
+    state.with_vault(|v| v.tags())
+}
+
 #[tauri::command]
 fn note_get(state: State<'_, AppState>, id: String) -> CmdResult<Note> {
     state.with_vault(|v| v.get_note(&id))
@@ -530,6 +535,7 @@ pub fn run() {
             note_create,
             note_get,
             search,
+            tags,
             note_save,
             note_move,
             note_delete,

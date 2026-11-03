@@ -165,6 +165,37 @@ md.renderer.rules.image = (tokens, idx, options, env, self) => {
   return defaultImage(tokens, idx, options, env, self);
 };
 
+// #tags become clickable pills. Same rules as the Rust side (tags.rs):
+// preceded by start or whitespace, letters/digits/_-/, not only digits.
+// Code spans and blocks never reach inline rules, so they are excluded.
+const TAG_RE = /^#([\p{L}\p{N}_\-/]+)/u;
+
+/** "AI//LLM/" → "ai/llm"; null if it isn't a valid tag. */
+export function normalizeTag(raw: string): string | null {
+  const tag = raw.split("/").filter(Boolean).join("/").toLowerCase();
+  return tag && !/^[\d/]+$/.test(tag) ? tag : null;
+}
+
+md.inline.ruler.after("text", "tag", (state, silent) => {
+  const pos = state.pos;
+  if (state.src.charCodeAt(pos) !== 0x23 /* # */) return false;
+  if (pos > 0 && !/\s/.test(state.src[pos - 1])) return false;
+  const m = TAG_RE.exec(state.src.slice(pos));
+  const tag = m && normalizeTag(m[1]);
+  if (!m || !tag) return false;
+  if (!silent) {
+    const token = state.push("tag", "", 0);
+    token.content = m[1];
+    token.info = tag;
+  }
+  state.pos += m[0].length;
+  return true;
+});
+md.renderer.rules.tag = (tokens, idx) => {
+  const t = tokens[idx];
+  return `<span class="tag" data-tag="${escapeHtml(t.info)}">#${escapeHtml(t.content)}</span>`;
+};
+
 // Tag every block with its source line (0-based) so the editor and preview
 // can scroll in sync, the same technique VS Code uses.
 md.core.ruler.push("source-lines", (state) => {
@@ -226,7 +257,7 @@ const PURIFY = {
   FORBID_TAGS: ["style", "form", "button", "textarea", "select", "iframe", "object", "embed"],
   FORBID_ATTR: ["srcset"],
   ALLOW_DATA_ATTR: false,
-  ADD_ATTR: ["data-line", "loading"],
+  ADD_ATTR: ["data-line", "data-tag", "loading"],
   // DOMPurify's default plus our attachment: and gnotes: schemes.
   ALLOWED_URI_REGEXP:
     /^(?:(?:https?|mailto|tel|attachment|gnotes):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,

@@ -7,6 +7,7 @@
 use serde::Serialize;
 
 use crate::error::Result;
+use crate::tags;
 use crate::vault::Vault;
 
 /// At most this many notes are returned.
@@ -43,8 +44,11 @@ pub struct SearchResults {
     pub hits: Vec<SearchHit>,
     /// Number of matching notes, including those past [`MAX_HITS`].
     pub total: usize,
-    /// The parsed, lowercase terms, so the UI can highlight them.
+    /// The parsed, lowercase terms, so the UI can highlight them (tag
+    /// filters appear as `#tag`).
     pub terms: Vec<String>,
+    /// Tag filters in the query (`#tag` or `tag:tag`), normalized.
+    pub tags: Vec<String>,
 }
 
 /// Splits a query into lowercase terms. `"quoted phrases"` stay together.
@@ -108,12 +112,26 @@ fn snippet(line: &str, lower: &str, terms: &[String]) -> String {
 
 impl Vault {
     /// Finds notes containing every term of `query` (case-insensitive) in
-    /// their title, folder path or body. Notes whose title matches come
-    /// first, then those with more matching lines, then the most recent.
+    /// their title, folder path or body, and carrying every `#tag` /
+    /// `tag:name` of it (or a tag nested under it). Notes whose title
+    /// matches come first, then those with more matching lines, then the
+    /// most recent.
     pub fn search(&self, query: &str) -> Result<SearchResults> {
-        let terms = parse_query(query);
-        if terms.is_empty() {
-            return Ok(SearchResults { hits: Vec::new(), total: 0, terms });
+        let mut terms = Vec::new();
+        let mut tag_filters = Vec::new();
+        for t in parse_query(query) {
+            let tag = t.strip_prefix("tag:").or_else(|| t.strip_prefix('#').filter(|r| !r.is_empty()));
+            match tag.and_then(tags::normalize) {
+                Some(tag) if !tag_filters.contains(&tag) => tag_filters.push(tag),
+                Some(_) => {}
+                None => terms.push(t),
+            }
+        }
+        // What matching lines are found (and highlighted) by.
+        let mut needles = terms.clone();
+        needles.extend(tag_filters.iter().map(|t| format!("#{t}")));
+        if needles.is_empty() {
+            return Ok(SearchResults { hits: Vec::new(), total: 0, terms: needles, tags: tag_filters });
         }
         let mut st = self.conn.prepare("SELECT id, folder, title, body, updated FROM notes")?;
         let mut rows = st.query([])?;
@@ -122,6 +140,12 @@ impl Vault {
             let folder: String = r.get(1)?;
             let title: String = r.get(2)?;
             let body: String = r.get(3)?;
+            if !tag_filters.is_empty() {
+                let note_tags = tags::extract(&body);
+                if !tag_filters.iter().all(|t| tags::has_tag(&note_tags, t)) {
+                    continue;
+                }
+            }
             let path = format!("{folder}/{title}").to_lowercase();
             let body_lower = body.to_lowercase();
             if !terms.iter().all(|t| path.contains(t.as_str()) || body_lower.contains(t.as_str())) {
@@ -132,10 +156,10 @@ impl Vault {
             let mut line_count = 0;
             for (i, line) in body.lines().enumerate() {
                 let lower = line.to_lowercase();
-                if terms.iter().any(|t| lower.contains(t.as_str())) {
+                if needles.iter().any(|t| lower.contains(t.as_str())) {
                     line_count += 1;
                     if lines.len() < MAX_LINES {
-                        lines.push(LineMatch { line: i, text: snippet(line, &lower, &terms) });
+                        lines.push(LineMatch { line: i, text: snippet(line, &lower, &needles) });
                     }
                 }
             }
@@ -157,7 +181,7 @@ impl Vault {
         });
         let total = hits.len();
         hits.truncate(MAX_HITS);
-        Ok(SearchResults { hits, total, terms })
+        Ok(SearchResults { hits, total, terms: needles, tags: tag_filters })
     }
 }
 

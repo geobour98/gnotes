@@ -13,12 +13,14 @@
     type NoteMeta,
     type SearchHit,
     type Status,
+    type TagCount,
     type Tree,
   } from "$lib/api";
   import Unlock from "$lib/Unlock.svelte";
   import { toggleFenceWrap } from "$lib/markdown";
   import Sidebar from "$lib/Sidebar.svelte";
   import Search from "$lib/Search.svelte";
+  import Tags from "$lib/Tags.svelte";
   import Editor from "$lib/Editor.svelte";
   import Preview from "$lib/Preview.svelte";
   import Modal, { ask, askImportTarget, askSecret, confirmDanger, showInfo } from "$lib/Modal.svelte";
@@ -39,6 +41,14 @@
   let previewRef = $state<ReturnType<typeof Preview>>();
   let toast = $state("");
   let searching = $state(false);
+  let searchQuery = $state("");
+  let tagList = $state<TagCount[]>([]);
+  // The tag being searched for, when the query is just one tag.
+  let activeTag = $derived.by(() => {
+    const m = searching ? /^\s*(?:#|tag:)([^\s#]+)\s*$/i.exec(searchQuery) : null;
+    return m ? m[1].toLowerCase().split("/").filter(Boolean).join("/") : null;
+  });
+  let tagsTimer: ReturnType<typeof setTimeout> | undefined;
   let searchRef = $state<ReturnType<typeof Search>>();
   // Line the preview should show once the note it belongs to has rendered.
   let pendingPreviewLine: number | null = null;
@@ -131,6 +141,19 @@
   }
   async function loadTree() {
     tree = await api.tree();
+    await loadTags();
+  }
+  async function loadTags() {
+    clearTimeout(tagsTimer);
+    try {
+      tagList = await api.tags();
+    } catch {}
+  }
+
+  /** Shows the notes with a tag (clicked in the sidebar or the preview). */
+  function showTag(tag: string) {
+    searching = true;
+    searchRef?.setQuery(`#${tag}`);
   }
 
   // ---------------------------------------------------------------- saving
@@ -174,6 +197,8 @@
       }
       const meta = tree.notes.find((n) => n.id === id);
       if (meta) meta.updated = updated;
+      clearTimeout(tagsTimer);
+      tagsTimer = setTimeout(loadTags, 1500);
     } catch (e) {
       saveState = "error";
       notify(`Save failed: ${e}`);
@@ -519,6 +544,10 @@
     current = null;
     draft = previewSource = "";
     tree = { folders: [], notes: [] };
+    tagList = [];
+    clearTimeout(tagsTimer);
+    searching = false;
+    searchQuery = "";
     saveState = "saved";
     refreshStatus();
   }
@@ -664,6 +693,7 @@
       </header>
       <Search
         bind:this={searchRef}
+        bind:query={searchQuery}
         visible={searching}
         selectedId={current?.id ?? null}
         onopen={openSearchHit}
@@ -680,6 +710,7 @@
         onrenameFolder={renameFolder}
         ondeleteFolder={deleteFolder}
       />
+      <Tags tags={tagList} {activeTag} ontag={showTag} />
       <footer class="side-foot">
         <div class="menu-wrap" bind:this={menuWrap}>
           <button class="menu-btn" aria-haspopup="menu" aria-expanded={menuOpen} onclick={() => (menuOpen = !menuOpen)}>
@@ -749,6 +780,7 @@
                 onscrollline={(l) => syncFrom("preview", l)}
                 onrendered={onPreviewRendered}
                 onattachment={saveAttachment}
+                ontag={showTag}
                 ontogglewrap={toggleCodeWrap}
               /></section>
           {/if}

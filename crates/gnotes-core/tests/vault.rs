@@ -350,3 +350,41 @@ fn search_matches_all_terms_case_insensitively() {
     assert!(r.hits[0].lines.is_empty());
     assert_eq!(v.search("   ").unwrap().total, 0);
 }
+
+#[test]
+fn tags_and_tag_search() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut v = Vault::create(dir.path().join("v.gnotes"), "pw").unwrap();
+    let a = v.create_note("", Some("Papers")).unwrap();
+    v.save_note(&a.id, "---\ntags: [ai]\n---\nreading list\n#ai/llm transformers").unwrap();
+    let b = v.create_note("", Some("Lab")).unwrap();
+    v.save_note(&b.id, "#ai #Work\n```\n#notatag\n```").unwrap();
+    let c = v.create_note("", Some("Plain")).unwrap();
+    v.save_note(&c.id, "# Heading only, issue #42").unwrap();
+
+    let tags: Vec<(String, usize)> = v.tags().unwrap().into_iter().map(|t| (t.tag, t.count)).collect();
+    assert_eq!(tags, [("ai".into(), 2), ("ai/llm".into(), 1), ("work".into(), 1)]);
+
+    // A tag matches itself and nested tags; both spellings work.
+    let ids = |q: &str| {
+        let mut ids: Vec<String> = v.search(q).unwrap().hits.into_iter().map(|h| h.id).collect();
+        ids.sort();
+        ids
+    };
+    let mut ab = vec![a.id.clone(), b.id.clone()];
+    ab.sort();
+    assert_eq!(ids("#ai"), ab);
+    assert_eq!(ids("tag:AI"), ab);
+    assert_eq!(ids("#ai/llm"), [a.id.clone()]);
+    assert_eq!(ids("#ai #work"), [b.id.clone()]);
+    assert_eq!(ids("#ai transformers"), [a.id.clone()]);
+    assert!(ids("#notatag").is_empty());
+    assert!(ids("#ai/l").is_empty());
+
+    let r = v.search("#ai/llm").unwrap();
+    assert_eq!(r.tags, ["ai/llm"]);
+    assert_eq!(r.terms, ["#ai/llm"]);
+    assert_eq!(r.hits[0].lines[0].line, 4);
+    // "#42" is not a tag, so it is searched as text.
+    assert_eq!(ids("#42"), [c.id.clone()]);
+}
