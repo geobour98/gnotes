@@ -1,11 +1,11 @@
 [package]
 name = "gnotes"
-version = "0.1.0"
-description = "Encrypted markdown notes"
+description = "gnotes desktop app (Tauri): encrypted Markdown notes"
 authors = ["geobour98"]
-edition = "2024"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary

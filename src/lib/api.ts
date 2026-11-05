@@ -83,8 +83,7 @@ export const api = {
   activity: () => invoke<void>("activity"),
   setAutoLock: (minutes: number) => invoke<void>("set_auto_lock", { minutes }),
   setLockOnScreenLock: (enabled: boolean) => invoke<void>("set_lock_on_screen_lock", { enabled }),
-  changePassword: (current: string, next: string) =>
-    invoke<void>("change_password", { current, new: next }),
+  changePassword: (current: string, next: string) => invoke<void>("change_password", { current, new: next }),
   backup: () => invoke<string>("backup_now"),
 
   exportMarkdown: (parent: string) => invoke<ExportReport>("export_markdown", { parent }),
@@ -146,9 +145,7 @@ export function formatSize(bytes: number): string {
 export function splitPath(path: string): { folder: string; title: string } {
   const clean = path.trim().replace(/^\/+|\/+$/g, "");
   const i = clean.lastIndexOf("/");
-  return i < 0
-    ? { folder: "", title: clean }
-    : { folder: clean.slice(0, i), title: clean.slice(i + 1) };
+  return i < 0 ? { folder: "", title: clean } : { folder: clean.slice(0, i), title: clean.slice(i + 1) };
 }
 
 export function joinPath(folder: string, name: string): string {

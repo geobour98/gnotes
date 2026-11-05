@@ -1,7 +1,7 @@
 {
   "name": "gnotes",
   "version": "0.1.0",
-  "description": "",
+  "description": "Encrypted Markdown notes: Obsidian-style editing in a single encrypted vault file.",
   "type": "module",
   "scripts": {
     "dev": "vite dev",
@@ -10,9 +10,16 @@
     "prepare": "svelte-kit sync || echo ''",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+    "format": "prettier --write . && cargo fmt --all",
+    "lint": "prettier --check . && cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings",
+    "test": "cargo test --workspace",
     "tauri": "tauri"
   },
   "license": "MIT",
+  "repository": "github:geobour98/gnotes",
+  "engines": {
+    "node": ">=22"
+  },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",
     "@codemirror/lang-markdown": "^6.5.2",
@@ -39,9 +46,12 @@
     "@sveltejs/kit": "^2.65.1",
     "@sveltejs/vite-plugin-svelte": "^7.1.2",
     "@tauri-apps/cli": "^2",
+    "prettier": "^3.9.10",
+    "prettier-plugin-svelte": "^3.5.2",
     "svelte": "^5.56.3",
     "svelte-check": "^4.6.0",
     "typescript": "~6.0.3",
     "vite": "^8.0.16"
-  }
+  },
+  "private": true
 }

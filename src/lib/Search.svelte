@@ -138,7 +138,8 @@
         <div class="hit" class:active={hit.id === selectedId}>
           <button class="title" onclick={() => onopen(hit, hit.lines[0]?.line ?? null, terms)}>
             <span class="name">
-              {#each highlight(hit.title, terms) as p}{#if p.mark}<mark>{p.text}</mark>{:else}{p.text}{/if}{/each}
+              {#each highlight(hit.title, terms) as p}{#if p.mark}<mark>{p.text}</mark
+                  >{:else}{p.text}{/if}{/each}
             </span>
             {#if hit.folder}<span class="folder">{hit.folder}</span>{/if}
           </button>
@@ -146,7 +147,8 @@
             <button class="line" title="Line {m.line + 1}" onclick={() => onopen(hit, m.line, terms)}>
               <span class="ln">{m.line + 1}</span>
               <span class="text">
-                {#each highlight(m.text, terms) as p}{#if p.mark}<mark>{p.text}</mark>{:else}{p.text}{/if}{/each}
+                {#each highlight(m.text, terms) as p}{#if p.mark}<mark>{p.text}</mark
+                    >{:else}{p.text}{/if}{/each}
               </span>
             </button>
           {/each}

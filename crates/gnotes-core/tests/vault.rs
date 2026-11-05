@@ -253,7 +253,8 @@ fn link_shared_image_folder() {
     let a = v.create_note("work", Some("A")).unwrap();
     let b = v.create_note("", Some("B")).unwrap();
     let c = v.create_note("", Some("C")).unwrap();
-    v.save_note(&a.id, "![](../img/photo.png)\n![[chart.png]]\n![x](img/2025/chart.png)\n![m](img/missing.png)").unwrap();
+    v.save_note(&a.id, "![](../img/photo.png)\n![[chart.png]]\n![x](img/2025/chart.png)\n![m](img/missing.png)")
+        .unwrap();
     v.save_note(&b.id, "<img src=\"img/Photo.PNG\">\n![[Photo.PNG|200]]").unwrap();
     v.save_note(&c.id, "no images here").unwrap();
     let before = v.get_note(&a.id).unwrap().updated;
@@ -310,7 +311,8 @@ fn import_into_chosen_folder() {
     for f in ["Archive", "Archive/2025", "Archive/2025/Old Vault", "Work/Projects/Old Vault/sub", "Work/Projects/sub"] {
         assert!(t.folders.iter().any(|x| x == f), "missing folder {f}: {:?}", t.folders);
     }
-    let in_projects: Vec<_> = t.notes.iter().filter(|n| n.folder == "Work/Projects").map(|n| n.title.as_str()).collect();
+    let in_projects: Vec<_> =
+        t.notes.iter().filter(|n| n.folder == "Work/Projects").map(|n| n.title.as_str()).collect();
     assert!(in_projects.contains(&"Plan") && in_projects.contains(&"Plan 2"), "{in_projects:?}");
     assert_eq!(v.get_note(&mine.id).unwrap().body, "my plan");
     // Invalid destination is rejected before anything is written.
@@ -375,9 +377,9 @@ fn tags_and_tag_search() {
     ab.sort();
     assert_eq!(ids("#ai"), ab);
     assert_eq!(ids("tag:AI"), ab);
-    assert_eq!(ids("#ai/llm"), [a.id.clone()]);
-    assert_eq!(ids("#ai #work"), [b.id.clone()]);
-    assert_eq!(ids("#ai transformers"), [a.id.clone()]);
+    assert_eq!(ids("#ai/llm"), std::slice::from_ref(&a.id));
+    assert_eq!(ids("#ai #work"), std::slice::from_ref(&b.id));
+    assert_eq!(ids("#ai transformers"), std::slice::from_ref(&a.id));
     assert!(ids("#notatag").is_empty());
     assert!(ids("#ai/l").is_empty());
 
@@ -386,7 +388,7 @@ fn tags_and_tag_search() {
     assert_eq!(r.terms, ["#ai/llm"]);
     assert_eq!(r.hits[0].lines[0].line, 4);
     // "#42" is not a tag, so it is searched as text.
-    assert_eq!(ids("#42"), [c.id.clone()]);
+    assert_eq!(ids("#42"), std::slice::from_ref(&c.id));
 }
 
 #[test]

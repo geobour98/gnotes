@@ -1,7 +1,7 @@
 // Markdown -> sanitized HTML.
 //
 // Raw HTML in notes is allowed (e.g. <details>, <kbd>), so everything goes
-// through DOMPurify. This matters: clipped web pages are untrusted, and
+// through DOMPurify. This matters: imported notes may be untrusted, and
 // script running in the webview could call backend commands.
 import MarkdownIt from "markdown-it";
 import footnote from "markdown-it-footnote";
@@ -32,9 +32,7 @@ const md = new MarkdownIt({
   highlight(code, lang) {
     const language = lang && hljs.getLanguage(lang) ? lang : null;
     // markdown-it wraps this in <pre><code ...>, keeping our data-line attr.
-    return language
-      ? hljs.highlight(code, { language, ignoreIllegals: true }).value
-      : escapeHtml(code);
+    return language ? hljs.highlight(code, { language, ignoreIllegals: true }).value : escapeHtml(code);
   },
 });
 
@@ -120,11 +118,33 @@ md.core.ruler.after("inline", "heading-ids", (state) => {
 
 // Obsidian/GitHub callouts:  > [!warning] Optional title
 const CALLOUT_GROUP: Record<string, string> = {
-  note: "info", info: "info", todo: "info",
-  tip: "ok", hint: "ok", important: "ok", success: "ok", check: "ok", done: "ok",
-  warning: "warn", caution: "warn", attention: "warn", question: "warn", help: "warn", faq: "warn",
-  danger: "bad", error: "bad", bug: "bad", failure: "bad", fail: "bad", missing: "bad",
-  example: "neutral", quote: "neutral", cite: "neutral", abstract: "neutral", summary: "neutral", tldr: "neutral",
+  note: "info",
+  info: "info",
+  todo: "info",
+  tip: "ok",
+  hint: "ok",
+  important: "ok",
+  success: "ok",
+  check: "ok",
+  done: "ok",
+  warning: "warn",
+  caution: "warn",
+  attention: "warn",
+  question: "warn",
+  help: "warn",
+  faq: "warn",
+  danger: "bad",
+  error: "bad",
+  bug: "bad",
+  failure: "bad",
+  fail: "bad",
+  missing: "bad",
+  example: "neutral",
+  quote: "neutral",
+  cite: "neutral",
+  abstract: "neutral",
+  summary: "neutral",
+  tldr: "neutral",
 };
 md.core.ruler.after("block", "callouts", (state) => {
   const tokens = state.tokens;
@@ -239,8 +259,7 @@ DOMPurify.addHook("afterSanitizeAttributes", (node) => {
     else if (attr === "src") {
       node.setAttribute("src", attachmentUrl(m[1]));
       node.setAttribute("data-attachment", m[1]); // for the right-click menu
-    }
-    else node.classList.add("attachment-link");
+    } else node.classList.add("attachment-link");
   }
 });
 
@@ -259,8 +278,7 @@ const PURIFY = {
   ALLOW_DATA_ATTR: false,
   ADD_ATTR: ["data-line", "data-tag", "loading"],
   // DOMPurify's default plus our attachment: and gnotes: schemes.
-  ALLOWED_URI_REGEXP:
-    /^(?:(?:https?|mailto|tel|attachment|gnotes):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
+  ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel|attachment|gnotes):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
 };
 
 // YAML front matter (--- ... --- at the very top) is shown as a properties

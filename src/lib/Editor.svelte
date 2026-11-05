@@ -110,7 +110,10 @@
         if (i >= 0 && (best < 0 || i < best)) [best, from, to] = [i, l.from + i, l.from + i + term.length];
       }
     }
-    view.dispatch({ selection: { anchor: from, head: to }, effects: EditorView.scrollIntoView(from, { y: "center" }) });
+    view.dispatch({
+      selection: { anchor: from, head: to },
+      effects: EditorView.scrollIntoView(from, { y: "center" }),
+    });
     view.focus();
   }
 

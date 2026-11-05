@@ -41,9 +41,8 @@ fn listen(app: AppHandle) -> zbus::Result<()> {
 
     // "auto" = our session, or the user's graphical session when we were
     // started outside one (e.g. from a systemd app scope).
-    let session_path: OwnedObjectPath = manager
-        .call("GetSession", &("auto",))
-        .or_else(|_| manager.call("GetSessionByPID", &(std::process::id(),)))?;
+    let session_path: OwnedObjectPath =
+        manager.call("GetSession", &("auto",)).or_else(|_| manager.call("GetSessionByPID", &(std::process::id(),)))?;
     let session = Proxy::new(&conn, DEST, session_path, "org.freedesktop.login1.Session")?;
 
     {
@@ -85,9 +84,7 @@ fn listen(app: AppHandle) -> zbus::Result<()> {
 
 /// A logind "delay" inhibitor: suspend waits until the fd is closed.
 fn inhibit(manager: &Proxy) -> Option<OwnedFd> {
-    manager
-        .call("Inhibit", &("sleep", "gnotes", "Lock the vault before sleeping", "delay"))
-        .ok()
+    manager.call("Inhibit", &("sleep", "gnotes", "Lock the vault before sleeping", "delay")).ok()
 }
 
 /// Asks the UI to save and lock; locks directly if it doesn't in time.

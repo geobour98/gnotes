@@ -23,6 +23,9 @@
   import Search from "$lib/Search.svelte";
   import Tags from "$lib/Tags.svelte";
   import Outline from "$lib/Outline.svelte";
+  import Dropdown, { type MenuItem } from "$lib/Dropdown.svelte";
+  import StartView from "$lib/StartView.svelte";
+  import * as prefs from "$lib/prefs";
   import Editor, { type EditorSnapshot } from "$lib/Editor.svelte";
   import TabBar from "$lib/TabBar.svelte";
   import Preview from "$lib/Preview.svelte";
@@ -46,9 +49,9 @@
   let previewSource = $state("");
   let selectedFolder = $state("");
   let saveState = $state<"saved" | "dirty" | "saving" | "error">("saved");
-  let mode = $state<Mode>(loadMode());
-  let syncScroll = $state(loadFlag("gnotes.syncScroll", true));
-  let showOutline = $state(loadFlag("gnotes.outline", false));
+  let mode = $state<Mode>(prefs.loadString("gnotes.mode", MODES, "split"));
+  let syncScroll = $state(prefs.loadFlag("gnotes.syncScroll", true));
+  let showOutline = $state(prefs.loadFlag("gnotes.outline", false));
   // Source line at the top of the visible pane (for the outline highlight).
   let viewTop = $state(0);
   let editorRef = $state<ReturnType<typeof Editor>>();
@@ -75,28 +78,10 @@
   // The editor reads this once on mount (e.g. after switching view mode).
   const currentDraft = () => draft;
 
-  function loadMode(): Mode {
-    try {
-      const m = localStorage.getItem("gnotes.mode") as Mode | null;
-      return m && MODES.includes(m) ? m : "split";
-    } catch {
-      return "split";
-    }
-  }
   function setMode(m: Mode) {
     mode = m;
-    try {
-      localStorage.setItem("gnotes.mode", m);
-    } catch {}
+    prefs.save("gnotes.mode", m);
     if (m === "split") requestAnimationFrame(() => syncFrom("editor"));
-  }
-  function loadFlag(key: string, fallback: boolean): boolean {
-    try {
-      const v = localStorage.getItem(key);
-      return v === null ? fallback : v === "1";
-    } catch {
-      return fallback;
-    }
   }
 
   // ---------------------------------------------------------- scroll sync
@@ -110,18 +95,14 @@
 
   function toggleSync() {
     syncScroll = !syncScroll;
-    try {
-      localStorage.setItem("gnotes.syncScroll", syncScroll ? "1" : "0");
-    } catch {}
+    prefs.save("gnotes.syncScroll", syncScroll);
     if (syncScroll) syncFrom("editor");
     notify(syncScroll ? "Scroll sync on" : "Scroll sync off");
   }
 
   function toggleOutline() {
     showOutline = !showOutline;
-    try {
-      localStorage.setItem("gnotes.outline", showOutline ? "1" : "0");
-    } catch {}
+    prefs.save("gnotes.outline", showOutline);
   }
 
   /** Outline click: put the heading at the top of both panes. */
@@ -237,8 +218,6 @@
     }
   }
 
-  // ----------------------------------------------------------------- notes
-
   // ------------------------------------------------------------------ tabs
 
   /**
@@ -332,7 +311,9 @@
     const activeId = active >= 0 ? tabs[active]?.id : undefined;
     const next = tabs.filter((t) => byId.has(t.id)).map((t) => ({ ...byId.get(t.id)! }));
     for (const t of tabs) if (!byId.has(t.id)) snapshots.delete(t.id);
-    const changed = next.length !== tabs.length || next.some((t, i) => t.title !== tabs[i].title || t.folder !== tabs[i].folder);
+    const changed =
+      next.length !== tabs.length ||
+      next.some((t, i) => t.title !== tabs[i].title || t.folder !== tabs[i].folder);
     if (!changed) return;
     const oldActive = active;
     tabs = next;
@@ -368,6 +349,8 @@
     if (i >= 0) await loadTab(i).catch(() => showStart());
     else if (tabs.length) active = -1;
   }
+
+  // ----------------------------------------------------------------- notes
 
   /** Opens a search result, scrolled to (and selecting) the matching line. */
   async function openSearchHit(hit: SearchHit, line: number | null, terms: string[]) {
@@ -481,7 +464,9 @@
     const inside = tree.notes.filter((n) => n.folder === path || n.folder.startsWith(path + "/")).length;
     const ok = await confirmDanger(
       `Delete folder "${path}"?`,
-      inside ? `This also deletes ${inside} note(s) inside it. This cannot be undone.` : "The folder is empty.",
+      inside
+        ? `This also deletes ${inside} note(s) inside it. This cannot be undone.`
+        : "The folder is empty.",
     );
     if (!ok) return;
     await attempt(async () => {
@@ -566,15 +551,10 @@
     });
   }
 
-  // --------------------------------------------------------- import/export
-
-  let menuOpen = $state(false);
-  let menuWrap = $state<HTMLDivElement>();
-  let exportOpen = $state(false);
-  let exportWrap = $state<HTMLDivElement>();
-  let printRoot = $state<HTMLDivElement>();
-
   // ------------------------------------------------------- single-note export
+
+  // Filled only while printing (see printNote).
+  let printRoot = $state<HTMLDivElement>();
 
   /** The note as rendered: from the open preview, or rendered off-screen. */
   async function renderedNote() {
@@ -585,7 +565,6 @@
   }
 
   async function exportNoteHtml() {
-    exportOpen = false;
     const note = current;
     if (!note) return;
     const path = await saveDialog({
@@ -601,7 +580,6 @@
   }
 
   async function exportNoteMarkdown() {
-    exportOpen = false;
     const note = current;
     if (!note) return;
     const dir = await openDialog({ directory: true, title: `Export "${note.title}" as Markdown into…` });
@@ -609,22 +587,19 @@
     await attempt(async () => {
       await flush();
       const r = await api.exportNoteMarkdown(note.id, dir);
-      notify(`Exported to ${r.path}${r.attachments ? ` (+${r.attachments} attachment${r.attachments === 1 ? "" : "s"})` : ""}`);
+      notify(
+        `Exported to ${r.path}${r.attachments ? ` (+${r.attachments} attachment${r.attachments === 1 ? "" : "s"})` : ""}`,
+      );
     });
   }
 
   async function printCurrentNote() {
-    exportOpen = false;
     if (!current || !printRoot) return;
     const root = printRoot;
     await attempt(async () => printNote(root, await renderedNote()));
   }
 
-  /** Runs a Vault-menu action after closing the menu. */
-  function menuAction(fn: () => unknown) {
-    menuOpen = false;
-    fn();
-  }
+  // ---------------------------------------------- vault import / export
 
   async function importFolder() {
     const dir = await openDialog({ directory: true, title: "Import a folder of Markdown files" });
@@ -642,7 +617,8 @@
       const msg = `Imported ${r.notes} notes and ${r.attachments} attachments into ${where}.`;
       if (r.warnings.length) {
         const shown = r.warnings.slice(0, 200);
-        const more = r.warnings.length > shown.length ? `\n… and ${r.warnings.length - shown.length} more` : "";
+        const more =
+          r.warnings.length > shown.length ? `\n… and ${r.warnings.length - shown.length} more` : "";
         await showInfo(
           "Import finished with warnings",
           `${msg}\n\nThese referenced files were not imported:\n• ${shown.join("\n• ")}${more}`,
@@ -683,7 +659,10 @@
         ? `Copied ${r.attachments} images into the vault and updated ${r.links} references in ${r.notes} notes.`
         : "No note references a file in that folder.";
       if (r.warnings.length) {
-        await showInfo("Images imported: some files are still missing", `${msg}\n\nNot found in that folder:\n${warningList(r.warnings)}`);
+        await showInfo(
+          "Images imported: some files are still missing",
+          `${msg}\n\nNot found in that folder:\n${warningList(r.warnings)}`,
+        );
       } else {
         notify(msg);
       }
@@ -787,12 +766,18 @@
     await attempt(async () => {
       await api.setLockOnScreenLock(enabled);
       await refreshStatus();
-      notify(enabled ? "Will lock when the screen locks or the computer sleeps" : "Screen-lock locking disabled");
+      notify(
+        enabled ? "Will lock when the screen locks or the computer sleeps" : "Screen-lock locking disabled",
+      );
     });
   }
 
   async function settingsAutoLock() {
-    const input = await ask("Auto-lock after N minutes of inactivity (0 = never)", String(status?.auto_lock_minutes ?? 10), "Save");
+    const input = await ask(
+      "Auto-lock after N minutes of inactivity (0 = never)",
+      String(status?.auto_lock_minutes ?? 10),
+      "Save",
+    );
     if (input === null) return;
     const minutes = Number.parseInt(input, 10);
     if (!Number.isFinite(minutes) || minutes < 0) return notify("Enter a whole number of minutes");
@@ -913,19 +898,26 @@
     };
   });
 
-  const SHORTCUTS: [string[], string][] = [
-    [["Ctrl", "N"], "New note"],
-    [["Ctrl", "Shift", "F"], "Search (#tag for tags)"],
-    [["Ctrl", "Shift", "O"], "Outline"],
-    [["Ctrl", "E"], "Switch view: edit / split / preview"],
-    [["Ctrl", "Tab"], "Next tab (Shift: previous)"],
-    [["Ctrl", "W"], "Close tab"],
-    [["Ctrl", "1…9"], "Go to tab"],
-    [["Ctrl", "S"], "Save now"],
-    [["Ctrl", "Shift", "S"], "Scroll sync"],
-    [["Ctrl", "L"], "Lock"],
-    [["Ctrl", "+ / − / 0"], "Zoom in / out / reset"],
+  const exportMenu: MenuItem[] = [
+    { label: "HTML file (images included)…", run: exportNoteHtml },
+    { label: "Markdown with attachments…", run: exportNoteMarkdown },
+    { label: "Print / Save as PDF…", run: printCurrentNote },
   ];
+
+  let vaultMenu = $derived<MenuItem[]>([
+    { label: "Import Markdown folder…", run: importFolder },
+    { label: "Import images from folder…", run: linkImagesFromFolder },
+    { label: "Export as Markdown…", run: exportMarkdown },
+    "-",
+    { label: "Backup now", run: backup },
+    { label: "Auto-lock…", run: settingsAutoLock },
+    {
+      label: "Lock on screen lock / sleep",
+      run: toggleLockOnScreenLock,
+      checked: status?.lock_on_screen_lock ?? true,
+    },
+    { label: "Change password…", run: settingsPassword },
+  ]);
 
   const saveLabel = { saved: "Saved", dirty: "Edited", saving: "Saving…", error: "Save failed" };
 </script>
@@ -933,14 +925,9 @@
 <svelte:window
   onkeydown={(e) => {
     onActivity();
-    if (e.key === "Escape") menuOpen = exportOpen = false;
     onKeydown(e);
   }}
-  onmousedown={(e) => {
-    onActivity();
-    if (menuOpen && !menuWrap?.contains(e.target as Node)) menuOpen = false;
-    if (exportOpen && !exportWrap?.contains(e.target as Node)) exportOpen = false;
-  }}
+  onmousedown={onActivity}
 />
 
 <Modal />
@@ -984,28 +971,7 @@
       />
       <Tags tags={tagList} {activeTag} ontag={showTag} />
       <footer class="side-foot">
-        <div class="menu-wrap" bind:this={menuWrap}>
-          <button class="menu-btn" aria-haspopup="menu" aria-expanded={menuOpen} onclick={() => (menuOpen = !menuOpen)}>
-            Vault ▴
-          </button>
-          {#if menuOpen}
-            <div class="menu" role="menu">
-              <button role="menuitem" onclick={() => menuAction(importFolder)}>Import Markdown folder…</button>
-              <button role="menuitem" onclick={() => menuAction(linkImagesFromFolder)}>Import images from folder…</button>
-              <button role="menuitem" onclick={() => menuAction(exportMarkdown)}>Export as Markdown…</button>
-              <hr />
-              <button role="menuitem" onclick={() => menuAction(backup)}>Backup now</button>
-              <button role="menuitem" onclick={() => menuAction(settingsAutoLock)}>Auto-lock…</button>
-              <button
-                role="menuitemcheckbox"
-                aria-checked={status?.lock_on_screen_lock ?? true}
-                onclick={() => menuAction(toggleLockOnScreenLock)}
-                >{status?.lock_on_screen_lock ? "✓" : "  "} Lock on screen lock / sleep</button
-              >
-              <button role="menuitem" onclick={() => menuAction(settingsPassword)}>Change password…</button>
-            </div>
-          {/if}
-        </div>
+        <Dropdown label="Vault ▴" items={vaultMenu} up variant="block" />
         <button class="primary" onclick={lock} title="Lock (Ctrl+L)">Lock</button>
       </footer>
     </aside>
@@ -1028,17 +994,10 @@
           </button>
           <span class="spacer"></span>
           <span class="save {saveState}">{saveLabel[saveState]}</span>
-          <button class="tool" title="Attach files (or paste / drop them)" onclick={attachPicked}>📎 Attach</button>
-          <div class="export-wrap" bind:this={exportWrap}>
-            <button class="tool" aria-haspopup="menu" aria-expanded={exportOpen} title="Export or print this note" onclick={() => (exportOpen = !exportOpen)}>⇪ Export ▾</button>
-            {#if exportOpen}
-              <div class="menu down" role="menu">
-                <button role="menuitem" onclick={exportNoteHtml}>HTML file (images included)…</button>
-                <button role="menuitem" onclick={exportNoteMarkdown}>Markdown with attachments…</button>
-                <button role="menuitem" onclick={printCurrentNote}>Print / Save as PDF…</button>
-              </div>
-            {/if}
-          </div>
+          <button class="tool" title="Attach files (or paste / drop them)" onclick={attachPicked}
+            >📎 Attach</button
+          >
+          <Dropdown label="⇪ Export ▾" title="Export or print this note" items={exportMenu} />
           {#if mode === "split"}
             <button
               class="sync"
@@ -1062,61 +1021,58 @@
           </div>
         </header>
         <div class="body">
-        <div class="panes {mode}">
-          <div class="jump" role="group" aria-label="Jump">
-            <button title="Go to top" aria-label="Go to top" onclick={() => jumpTo("top")}>↑</button>
-            <button title="Go to bottom" aria-label="Go to bottom" onclick={() => jumpTo("bottom")}>↓</button>
-          </div>
-          {#key current.id}
-            {#if mode !== "preview"}
-              {@const tabId = current.id}
-              <section class="pane edit"><Editor
-                  bind:this={editorRef}
-                  doc={currentDraft()}
-                  initial={snapshotFor(tabId, currentDraft())}
-                  onsnapshot={(snap) => {
-                    // Only for tabs still open: a closed tab's text shouldn't linger.
-                    if (tabs.some((t) => t.id === tabId)) snapshots.set(tabId, snap);
-                  }}
-                  onchange={onEdit}
+          <div class="panes {mode}">
+            <div class="jump" role="group" aria-label="Jump">
+              <button title="Go to top" aria-label="Go to top" onclick={() => jumpTo("top")}>↑</button>
+              <button title="Go to bottom" aria-label="Go to bottom" onclick={() => jumpTo("bottom")}
+                >↓</button
+              >
+            </div>
+            {#key current.id}
+              {#if mode !== "preview"}
+                {@const tabId = current.id}
+                <section class="pane edit">
+                  <Editor
+                    bind:this={editorRef}
+                    doc={currentDraft()}
+                    initial={snapshotFor(tabId, currentDraft())}
+                    onsnapshot={(snap) => {
+                      // Only for tabs still open: a closed tab's text shouldn't linger.
+                      if (tabs.some((t) => t.id === tabId)) snapshots.set(tabId, snap);
+                    }}
+                    onchange={onEdit}
+                    onscrollline={(l) => {
+                      viewTop = l;
+                      syncFrom("editor", l);
+                    }}
+                    onpastefiles={attachPasted}
+                  />
+                </section>
+              {/if}
+            {/key}
+            {#if mode !== "edit"}
+              <section class="pane preview">
+                <Preview
+                  bind:this={previewRef}
+                  source={previewSource}
                   onscrollline={(l) => {
-                    viewTop = l;
-                    syncFrom("editor", l);
+                    if (mode === "preview" || driver !== "editor") viewTop = l;
+                    syncFrom("preview", l);
                   }}
-                  onpastefiles={attachPasted}
-                /></section>
+                  onrendered={onPreviewRendered}
+                  onattachment={saveAttachment}
+                  ontag={showTag}
+                  ontogglewrap={toggleCodeWrap}
+                />
+              </section>
             {/if}
-          {/key}
-          {#if mode !== "edit"}
-            <section class="pane preview"><Preview
-                bind:this={previewRef}
-                source={previewSource}
-                onscrollline={(l) => {
-                  if (mode === "preview" || driver !== "editor") viewTop = l;
-                  syncFrom("preview", l);
-                }}
-                onrendered={onPreviewRendered}
-                onattachment={saveAttachment}
-                ontag={showTag}
-                ontogglewrap={toggleCodeWrap}
-              /></section>
+          </div>
+          {#if showOutline}
+            <Outline source={previewSource} topLine={viewTop} onjump={jumpToLine} onclose={toggleOutline} />
           {/if}
         </div>
-        {#if showOutline}
-          <Outline source={previewSource} topLine={viewTop} onjump={jumpToLine} onclose={toggleOutline} />
-        {/if}
-        </div>
       {:else}
-        <div class="empty">
-          <p>Select a note or create one.</p>
-          <button class="primary" onclick={newNote}>New note</button>
-          <dl class="keys">
-            {#each SHORTCUTS as [keys, action]}
-              <dt>{#each keys as k, i}{#if i}<span class="plus">+</span>{/if}<kbd>{k}</kbd>{/each}</dt>
-              <dd>{action}</dd>
-            {/each}
-          </dl>
-        </div>
+        <StartView onnew={newNote} />
       {/if}
     </main>
   </div>
@@ -1186,56 +1142,14 @@
     padding: 0.5rem;
     border-top: 1px solid var(--border);
   }
-  .side-foot > button,
-  .menu-btn {
+  /* Vault menu and Lock button share the footer evenly. */
+  .side-foot > :global(*) {
+    flex: 1;
+  }
+  .side-foot > button {
     width: 100%;
     font-size: 0.85rem;
     padding: 0.35rem 0.5rem;
-  }
-  .side-foot > * {
-    flex: 1;
-  }
-  .menu-wrap {
-    position: relative;
-  }
-  .menu {
-    position: absolute;
-    bottom: calc(100% + 0.35rem);
-    left: 0;
-    min-width: 14rem;
-    display: flex;
-    flex-direction: column;
-    padding: 0.3rem;
-    background: var(--bg-elev);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    box-shadow: 0 10px 30px rgb(0 0 0 / 0.3);
-    z-index: 20;
-  }
-  .menu button {
-    border: none;
-    background: none;
-    text-align: left;
-    padding: 0.4rem 0.6rem;
-    font-size: 0.88rem;
-    border-radius: 5px;
-  }
-  .menu button:hover {
-    background: var(--hover);
-  }
-  .export-wrap {
-    position: relative;
-  }
-  .menu.down {
-    bottom: auto;
-    top: calc(100% + 0.35rem);
-    left: auto;
-    right: 0;
-  }
-  .menu hr {
-    border: none;
-    border-top: 1px solid var(--border);
-    margin: 0.25rem 0;
   }
   main {
     display: flex;
@@ -1345,44 +1259,6 @@
   }
   .panes.split .edit {
     border-right: 1px solid var(--border);
-  }
-  .empty {
-    margin: auto;
-    text-align: center;
-    color: var(--muted);
-  }
-  .keys {
-    display: grid;
-    grid-template-columns: auto auto;
-    gap: 0.45rem 1rem;
-    align-items: center;
-    margin: 2rem auto 0;
-    width: max-content;
-    font-size: 0.85rem;
-    text-align: left;
-  }
-  .keys dt {
-    justify-self: end;
-    white-space: nowrap;
-  }
-  .keys dd {
-    margin: 0;
-  }
-  .keys kbd {
-    display: inline-block;
-    min-width: 1.4em;
-    padding: 0.05rem 0.4rem;
-    border: 1px solid var(--border);
-    border-bottom-width: 2px;
-    border-radius: 5px;
-    background: var(--bg-elev);
-    color: var(--fg);
-    font-family: var(--mono);
-    font-size: 0.78rem;
-    text-align: center;
-  }
-  .keys .plus {
-    margin: 0 0.2rem;
   }
   .toast {
     position: fixed;

@@ -32,19 +32,11 @@ pub fn derive_key(password: &str, salt: &[u8; SALT_LEN]) -> Result<Zeroizing<[u8
     derive_key_with(password, salt, M_COST_KIB, T_COST, P_COST)
 }
 
-fn derive_key_with(
-    password: &str,
-    salt: &[u8; SALT_LEN],
-    m: u32,
-    t: u32,
-    p: u32,
-) -> Result<Zeroizing<[u8; KEY_LEN]>> {
+fn derive_key_with(password: &str, salt: &[u8; SALT_LEN], m: u32, t: u32, p: u32) -> Result<Zeroizing<[u8; KEY_LEN]>> {
     let params = Params::new(m, t, p, Some(KEY_LEN)).map_err(|e| Error::Crypto(e.to_string()))?;
     let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut key = Zeroizing::new([0u8; KEY_LEN]);
-    argon
-        .hash_password_into(password.as_bytes(), salt, key.as_mut())
-        .map_err(|e| Error::Crypto(e.to_string()))?;
+    argon.hash_password_into(password.as_bytes(), salt, key.as_mut()).map_err(|e| Error::Crypto(e.to_string()))?;
     Ok(key)
 }
 

@@ -104,7 +104,9 @@
         <span class="chev" class:open>›</span>
         <span class="name">{f.name}</span>
         <span class="actions">
-          <button title="Rename / move" onclick={(e) => (e.stopPropagation(), onrenameFolder(f.path))}>✎</button>
+          <button title="Rename / move" onclick={(e) => (e.stopPropagation(), onrenameFolder(f.path))}
+            >✎</button
+          >
           <button title="Delete" onclick={(e) => (e.stopPropagation(), ondeleteFolder(f.path))}>✕</button>
         </span>
       </div>

@@ -163,21 +163,10 @@ impl Vault {
                     }
                 }
             }
-            hits.push(SearchHit {
-                id: r.get(0)?,
-                folder,
-                title,
-                updated: r.get(4)?,
-                title_match,
-                lines,
-                line_count,
-            });
+            hits.push(SearchHit { id: r.get(0)?, folder, title, updated: r.get(4)?, title_match, lines, line_count });
         }
         hits.sort_by(|a, b| {
-            b.title_match
-                .cmp(&a.title_match)
-                .then(b.line_count.cmp(&a.line_count))
-                .then(b.updated.cmp(&a.updated))
+            b.title_match.cmp(&a.title_match).then(b.line_count.cmp(&a.line_count)).then(b.updated.cmp(&a.updated))
         });
         let total = hits.len();
         hits.truncate(MAX_HITS);

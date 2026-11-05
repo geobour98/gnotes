@@ -63,11 +63,7 @@ pub fn parent(path: &str) -> &str {
 }
 
 pub fn join(folder: &str, name: &str) -> String {
-    if folder.is_empty() {
-        name.to_string()
-    } else {
-        format!("{folder}/{name}")
-    }
+    if folder.is_empty() { name.to_string() } else { format!("{folder}/{name}") }
 }
 
 /// True if `path` equals `folder` or lies inside it.

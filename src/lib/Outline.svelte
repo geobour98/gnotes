@@ -23,7 +23,8 @@
       const line = lines[i];
       const f = /^ {0,3}(`{3,}|~{3,})/.exec(line);
       if (fence) {
-        if (f && f[1][0] === fence.ch && f[1].length >= fence.n && !line.slice(f[0].length).trim()) fence = null;
+        if (f && f[1][0] === fence.ch && f[1].length >= fence.n && !line.slice(f[0].length).trim())
+          fence = null;
         continue;
       }
       if (f) {

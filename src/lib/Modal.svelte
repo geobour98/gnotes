@@ -39,7 +39,8 @@
         suggestions: folders,
         check: { label: `Put it in a new folder named “${sourceName}”`, value: true },
         confirm: "Import",
-        resolve: (v, checked) => resolve(v === null ? null : { into: v.trim().replace(/^\/+|\/+$/g, ""), newFolder: checked }),
+        resolve: (v, checked) =>
+          resolve(v === null ? null : { into: v.trim().replace(/^\/+|\/+$/g, ""), newFolder: checked }),
       };
     });
   }

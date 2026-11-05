@@ -9,3 +9,9 @@ node_modules
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 /target
+
+# Never commit vaults, backups or exports by accident
+*.gnotes
+*.gnotes.partial
+gnotes-backups/
+gnotes-export-*/

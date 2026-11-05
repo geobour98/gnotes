@@ -74,12 +74,13 @@ fn percent_decode(s: &str) -> String {
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
     while i < b.len() {
-        if b[i] == b'%' && i + 2 < b.len() {
-            if let Some(v) = std::str::from_utf8(&b[i + 1..i + 3]).ok().and_then(|h| u8::from_str_radix(h, 16).ok()) {
-                out.push(v);
-                i += 3;
-                continue;
-            }
+        if b[i] == b'%'
+            && i + 2 < b.len()
+            && let Some(v) = std::str::from_utf8(&b[i + 1..i + 3]).ok().and_then(|h| u8::from_str_radix(h, 16).ok())
+        {
+            out.push(v);
+            i += 3;
+            continue;
         }
         out.push(b[i]);
         i += 1;
@@ -89,10 +90,7 @@ fn percent_decode(s: &str) -> String {
 
 /// Turns any file/folder name into a valid vault name.
 fn sanitize_segment(name: &str) -> String {
-    let s: String = name
-        .chars()
-        .map(|c| if c.is_control() || r#"/\:*?"<>|"#.contains(c) { '-' } else { c })
-        .collect();
+    let s: String = name.chars().map(|c| if c.is_control() || r#"/\:*?"<>|"#.contains(c) { '-' } else { c }).collect();
     let s = s.trim().trim_end_matches('.').trim().to_string();
     let s: String = s.chars().take(200).collect();
     if s.is_empty() || s == "." || s == ".." { "Untitled".to_string() } else { s }
@@ -297,7 +295,9 @@ struct Source {
 }
 
 fn is_markdown(p: &Path) -> bool {
-    p.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("markdown"))
+    p.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("markdown"))
 }
 
 fn scan(root: &Path) -> Result<Source> {
@@ -434,7 +434,10 @@ impl Importer<'_> {
                     return whole;
                 };
                 let Some(m) = self.attach(&path) else { return whole };
-                let alias = c.get(2).map(|a| a.as_str().trim()).filter(|a| !a.is_empty() && !a.chars().all(|ch| ch.is_ascii_digit() || ch == 'x'));
+                let alias = c
+                    .get(2)
+                    .map(|a| a.as_str().trim())
+                    .filter(|a| !a.is_empty() && !a.chars().all(|ch| ch.is_ascii_digit() || ch == 'x'));
                 let label = alias.unwrap_or(&m.name).replace(['[', ']'], "");
                 self.links += 1;
                 if m.mime.starts_with("image/") {
@@ -452,7 +455,11 @@ impl Importer<'_> {
             .replace_all(&body, |c: &Captures| {
                 let whole = c[0].to_string();
                 let raw = c[3].trim_start_matches('<').trim_end_matches('>');
-                if in_code(c.get(0).unwrap().start()) || raw.is_empty() || raw.starts_with('#') || HAS_SCHEME.is_match(raw) {
+                if in_code(c.get(0).unwrap().start())
+                    || raw.is_empty()
+                    || raw.starts_with('#')
+                    || HAS_SCHEME.is_match(raw)
+                {
                     return whole;
                 }
                 let target = percent_decode(raw.split(['#', '?']).next().unwrap_or(""));
@@ -516,7 +523,8 @@ impl Vault {
         let tree = self.tree()?;
         let existing: HashSet<String> = tree.folders.into_iter().collect();
         let top = if new_folder {
-            let base = sanitize_segment(&root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
+            let base =
+                sanitize_segment(&root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
             unique(&paths::join(into, &base), |n| existing.contains(n))
         } else {
             into.to_string()
@@ -590,7 +598,8 @@ impl Vault {
         let notes: Vec<(String, String, String)> = {
             let mut st = self.conn.prepare("SELECT id, folder, title, body FROM notes ORDER BY folder, title")?;
             st.query_map([], |r| {
-                let (id, folder, title, body): (String, String, String, String) = (r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?);
+                let (id, folder, title, body): (String, String, String, String) =
+                    (r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?);
                 Ok((id, paths::join(&folder, &title), body))
             })?
             .collect::<rusqlite::Result<_>>()?
@@ -607,7 +616,8 @@ impl Vault {
                 changed += 1;
             }
         }
-        let report = LinkReport { notes: changed, attachments: imp.imported.len(), links: imp.links, warnings: imp.warnings };
+        let report =
+            LinkReport { notes: changed, attachments: imp.imported.len(), links: imp.links, warnings: imp.warnings };
         tx.commit()?;
         Ok(report)
     }

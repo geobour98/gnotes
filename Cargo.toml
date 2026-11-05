@@ -2,6 +2,13 @@
 resolver = "3"
 members = ["src-tauri", "crates/gnotes-core"]
 
+# Shared by both crates (`field.workspace = true`).
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/geobour98/gnotes"
+
 # Argon2 is unusably slow without optimizations; keep dev builds fast to unlock.
 [profile.dev.package.argon2]
 opt-level = 3

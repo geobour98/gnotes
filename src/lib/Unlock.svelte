@@ -54,9 +54,7 @@
         Confirm password
         <input type="password" bind:value={confirm} disabled={busy} autocomplete="off" />
       </label>
-      <p class="hint">
-        There is no password recovery. If you forget it, the notes cannot be decrypted.
-      </p>
+      <p class="hint">There is no password recovery. If you forget it, the notes cannot be decrypted.</p>
     {/if}
 
     {#if error}<p class="error">{error}</p>{/if}
