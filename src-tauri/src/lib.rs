@@ -273,8 +273,18 @@ async fn change_password(state: State<'_, AppState>, current: String, new: Strin
     tauri::async_runtime::spawn_blocking(move || Vault::open(&path, &current).map(drop))
         .await
         .map_err(|e| e.to_string())?
-        .map_err(|_| "current password is wrong".to_string())?;
-    state.with_vault(|v| v.change_password(&new))
+        .map_err(|_| {
+            #[cfg(debug_assertions)]
+            eprintln!("[gnotes] change password: current password rejected");
+            "current password is wrong".to_string()
+        })?;
+    let result = state.with_vault(|v| v.change_password(&new));
+    #[cfg(debug_assertions)]
+    match &result {
+        Ok(()) => eprintln!("[gnotes] change password: done and verified"),
+        Err(e) => eprintln!("[gnotes] change password FAILED: {e}"),
+    }
+    result
 }
 
 /// Writes a timestamped encrypted backup next to the vault and returns its path.

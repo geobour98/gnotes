@@ -218,6 +218,10 @@ impl Vault {
         let sql = Zeroizing::new(format!("PRAGMA rekey = \"{}\";", lit.as_str()));
         self.conn.execute_batch(&sql)?;
         self.key = key;
+        // Don't trust the re-key blindly: the file on disk must now open
+        // with the new key (and only then is the change reported as done).
+        open_keyed(&self.path, &self.key, &self.salt, false)
+            .map_err(|e| Error::Crypto(format!("password change could not be verified: {e}")))?;
         Ok(())
     }
 

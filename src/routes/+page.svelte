@@ -788,19 +788,31 @@
     });
   }
 
+  // The outcome is shown in a dialog, not a toast: it must not be missed.
   async function settingsPassword() {
     const cur = await askSecret("Current master password", "Next");
     if (cur === null) return;
-    const next = await askSecret("New master password (min 8 characters)", "Next");
+    const next = await askSecret("New master password (at least 8 characters)", "Next");
     if (next === null) return;
-    const again = await askSecret("Repeat new master password", "Change password");
+    if ([...next].length < 8) {
+      return showInfo("Password not changed", "The new password must be at least 8 characters.");
+    }
+    const again = await askSecret("Repeat the new master password", "Change password");
     if (again === null) return;
-    if (next !== again) return notify("Passwords do not match");
-    await attempt(async () => {
+    if (next !== again) {
+      return showInfo("Password not changed", "The two new passwords don't match.");
+    }
+    try {
       await flush();
+      notify("Changing password…");
       await api.changePassword(cur, next);
-      notify("Master password changed");
-    });
+      await showInfo(
+        "Master password changed",
+        "Use the new password from now on. Backups made earlier still open with the old one.",
+      );
+    } catch (e) {
+      await showInfo("Password not changed", String(e));
+    }
   }
 
   // ------------------------------------------------------------ lifecycle
