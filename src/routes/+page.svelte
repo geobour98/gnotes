@@ -270,6 +270,18 @@
     if (on) requestAnimationFrame(() => searchRef?.focus());
   }
 
+  /** Closes the open note (after saving) and shows the start view. */
+  async function goHome() {
+    await attempt(async () => {
+      await flush();
+      clearTimeout(saveTimer);
+      current = null;
+      draft = previewSource = "";
+      saveState = "saved";
+      viewTop = 0;
+    });
+  }
+
   async function newNote() {
     await attempt(async () => {
       const meta = await api.noteCreate(selectedFolder);
@@ -711,6 +723,17 @@
     };
   });
 
+  const SHORTCUTS: [string[], string][] = [
+    [["Ctrl", "N"], "New note"],
+    [["Ctrl", "Shift", "F"], "Search (#tag for tags)"],
+    [["Ctrl", "Shift", "O"], "Outline"],
+    [["Ctrl", "E"], "Switch view: edit / split / preview"],
+    [["Ctrl", "S"], "Save now"],
+    [["Ctrl", "Shift", "S"], "Scroll sync"],
+    [["Ctrl", "L"], "Lock"],
+    [["Ctrl", "+ / − / 0"], "Zoom in / out / reset"],
+  ];
+
   const saveLabel = { saved: "Saved", dirty: "Edited", saving: "Saving…", error: "Save failed" };
 </script>
 
@@ -734,7 +757,7 @@
   <div class="app">
     <aside>
       <header class="side-head">
-        <span class="brand">gnotes</span>
+        <button class="brand" title="Close the note (home)" onclick={goHome}>gnotes</button>
         <span class="spacer"></span>
         <button
           class="icon"
@@ -868,7 +891,12 @@
         <div class="empty">
           <p>Select a note or create one.</p>
           <button class="primary" onclick={newNote}>New note</button>
-          <p class="keys">Ctrl+N new · Ctrl+Shift+F search · Ctrl+Shift+O outline · Ctrl+E switch view · Ctrl+S save · Ctrl+Shift+S scroll sync · Ctrl+L lock · Ctrl +/−/0 zoom</p>
+          <dl class="keys">
+            {#each SHORTCUTS as [keys, action]}
+              <dt>{#each keys as k, i}{#if i}<span class="plus">+</span>{/if}<kbd>{k}</kbd>{/each}</dt>
+              <dd>{action}</dd>
+            {/each}
+          </dl>
         </div>
       {/if}
     </main>
@@ -910,6 +938,15 @@
   .brand {
     font-weight: 800;
     color: var(--accent);
+    border: none;
+    background: none;
+    padding: 0.1rem 0.25rem;
+    font-size: inherit;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .brand:hover {
+    background: var(--hover);
   }
   .spacer {
     flex: 1;
@@ -1084,8 +1121,37 @@
     color: var(--muted);
   }
   .keys {
-    font-size: 0.8rem;
-    margin-top: 1.5rem;
+    display: grid;
+    grid-template-columns: auto auto;
+    gap: 0.45rem 1rem;
+    align-items: center;
+    margin: 2rem auto 0;
+    width: max-content;
+    font-size: 0.85rem;
+    text-align: left;
+  }
+  .keys dt {
+    justify-self: end;
+    white-space: nowrap;
+  }
+  .keys dd {
+    margin: 0;
+  }
+  .keys kbd {
+    display: inline-block;
+    min-width: 1.4em;
+    padding: 0.05rem 0.4rem;
+    border: 1px solid var(--border);
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    background: var(--bg-elev);
+    color: var(--fg);
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    text-align: center;
+  }
+  .keys .plus {
+    margin: 0 0.2rem;
   }
   .toast {
     position: fixed;
