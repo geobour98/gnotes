@@ -137,8 +137,6 @@ Ctrl+click or middle-click a note in the sidebar to open it in a new tab.
 - The settings file (`~/.config/com.gnotes.app/config.json`) is not encrypted. It holds only the
   vault's path and the lock settings.
 
-Found a vulnerability? Please report it privately; see [SECURITY.md](SECURITY.md).
-
 ## Development
 
 ```
