@@ -21,6 +21,7 @@
   import Sidebar from "$lib/Sidebar.svelte";
   import Search from "$lib/Search.svelte";
   import Tags from "$lib/Tags.svelte";
+  import Outline from "$lib/Outline.svelte";
   import Editor from "$lib/Editor.svelte";
   import Preview from "$lib/Preview.svelte";
   import Modal, { ask, askImportTarget, askSecret, confirmDanger, showInfo } from "$lib/Modal.svelte";
@@ -37,6 +38,9 @@
   let saveState = $state<"saved" | "dirty" | "saving" | "error">("saved");
   let mode = $state<Mode>(loadMode());
   let syncScroll = $state(loadFlag("gnotes.syncScroll", true));
+  let showOutline = $state(loadFlag("gnotes.outline", false));
+  // Source line at the top of the visible pane (for the outline highlight).
+  let viewTop = $state(0);
   let editorRef = $state<ReturnType<typeof Editor>>();
   let previewRef = $state<ReturnType<typeof Preview>>();
   let toast = $state("");
@@ -101,6 +105,23 @@
     } catch {}
     if (syncScroll) syncFrom("editor");
     notify(syncScroll ? "Scroll sync on" : "Scroll sync off");
+  }
+
+  function toggleOutline() {
+    showOutline = !showOutline;
+    try {
+      localStorage.setItem("gnotes.outline", showOutline ? "1" : "0");
+    } catch {}
+  }
+
+  /** Outline click: put the heading at the top of both panes. */
+  function jumpToLine(line: number) {
+    driver = "jump";
+    clearTimeout(driverTimer);
+    driverTimer = setTimeout(() => (driver = null), 250);
+    editorRef?.scrollToLine(line);
+    previewRef?.scrollToLine(line);
+    viewTop = line;
   }
 
   /** Top/bottom buttons: move both panes to the edge, with sync paused. */
@@ -213,6 +234,7 @@
     const note = await api.noteGet(meta.id);
     current = note;
     draft = previewSource = note.body;
+    viewTop = 0;
     saveState = "saved";
   }
 
@@ -651,6 +673,7 @@
     if (e.shiftKey) {
       if (k === "s") (e.preventDefault(), toggleSync());
       else if (k === "f") (e.preventDefault(), toggleSearch(true));
+      else if (k === "o") (e.preventDefault(), toggleOutline());
       return;
     }
     if (k === "n") (e.preventDefault(), newNote());
@@ -789,12 +812,20 @@
               onclick={toggleSync}>⇅ Sync</button
             >
           {/if}
+          <button
+            class="sync"
+            class:on={showOutline}
+            aria-pressed={showOutline}
+            title="Show the note's headings (Ctrl+Shift+O)"
+            onclick={toggleOutline}>☰ Outline</button
+          >
           <div class="seg" role="group" aria-label="View mode (Ctrl+E)">
             {#each MODES as m}
               <button class:on={mode === m} onclick={() => setMode(m)}>{m}</button>
             {/each}
           </div>
         </header>
+        <div class="body">
         <div class="panes {mode}">
           <div class="jump" role="group" aria-label="Jump">
             <button title="Go to top" aria-label="Go to top" onclick={() => jumpTo("top")}>↑</button>
@@ -806,7 +837,10 @@
                   bind:this={editorRef}
                   doc={currentDraft()}
                   onchange={onEdit}
-                  onscrollline={(l) => syncFrom("editor", l)}
+                  onscrollline={(l) => {
+                    viewTop = l;
+                    syncFrom("editor", l);
+                  }}
                   onpastefiles={attachPasted}
                 /></section>
             {/if}
@@ -815,7 +849,10 @@
             <section class="pane preview"><Preview
                 bind:this={previewRef}
                 source={previewSource}
-                onscrollline={(l) => syncFrom("preview", l)}
+                onscrollline={(l) => {
+                  if (mode === "preview" || driver !== "editor") viewTop = l;
+                  syncFrom("preview", l);
+                }}
                 onrendered={onPreviewRendered}
                 onattachment={saveAttachment}
                 ontag={showTag}
@@ -823,11 +860,15 @@
               /></section>
           {/if}
         </div>
+        {#if showOutline}
+          <Outline source={previewSource} topLine={viewTop} onjump={jumpToLine} onclose={toggleOutline} />
+        {/if}
+        </div>
       {:else}
         <div class="empty">
           <p>Select a note or create one.</p>
           <button class="primary" onclick={newNote}>New note</button>
-          <p class="keys">Ctrl+N new · Ctrl+Shift+F search · Ctrl+E switch view · Ctrl+S save · Ctrl+Shift+S scroll sync · Ctrl+L lock · Ctrl +/−/0 zoom</p>
+          <p class="keys">Ctrl+N new · Ctrl+Shift+F search · Ctrl+Shift+O outline · Ctrl+E switch view · Ctrl+S save · Ctrl+Shift+S scroll sync · Ctrl+L lock · Ctrl +/−/0 zoom</p>
         </div>
       {/if}
     </main>
@@ -995,11 +1036,18 @@
     line-height: 1;
     box-shadow: 0 2px 8px rgb(0 0 0 / 0.15);
   }
+  /* Editor/preview panes plus the optional outline on the right. */
+  .body {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
   .panes {
     position: relative;
     flex: 1;
     display: grid;
     min-height: 0;
+    min-width: 0;
   }
   .panes.split {
     grid-template-columns: 1fr 1fr;
