@@ -121,13 +121,9 @@ fn vault_status(app: AppHandle, state: State<'_, AppState>) -> CmdResult<Status>
     let unlocked_path = state.vault.lock().unwrap().as_ref().map(|v| v.path().display().to_string());
     let vault_path = match (unlocked_path.clone(), cfg.last_vault) {
         (Some(p), _) | (None, Some(p)) => p,
-        (None, None) => app
-            .path()
-            .app_data_dir()
-            .map_err(|e| e.to_string())?
-            .join("notes.gnotes")
-            .display()
-            .to_string(),
+        (None, None) => {
+            app.path().app_data_dir().map_err(|e| e.to_string())?.join("notes.gnotes").display().to_string()
+        }
     };
     Ok(Status {
         unlocked: unlocked_path.is_some(),
@@ -344,12 +340,13 @@ fn percent_decode(s: &str) -> String {
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
     while i < b.len() {
-        if b[i] == b'%' && i + 2 < b.len() {
-            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
-                out.push(v);
-                i += 3;
-                continue;
-            }
+        if b[i] == b'%'
+            && i + 2 < b.len()
+            && let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16)
+        {
+            out.push(v);
+            i += 3;
+            continue;
         }
         out.push(b[i]);
         i += 1;
@@ -503,6 +500,40 @@ fn note_delete(state: State<'_, AppState>, id: String) -> CmdResult<()> {
     state.with_vault(|v| v.delete_note(&id))
 }
 
+/// The only pages the window may show: the app itself. Links in notes are
+/// opened in the system browser by the UI; anything that still tries to
+/// navigate the window (an unusual link type, a bug) is refused, so a remote
+/// page can never take the app's place, e.g. to fake the unlock screen.
+fn is_app_url(url: &tauri::Url) -> bool {
+    let host = url.host_str().unwrap_or("");
+    match url.scheme() {
+        "tauri" => host == "localhost",                        // Linux, macOS
+        "http" | "https" if host == "tauri.localhost" => true, // Windows
+        "http" if cfg!(debug_assertions) => {
+            matches!(host, "127.0.0.1" | "localhost") && url.port() == Some(1420) // dev server
+        }
+        _ => false,
+    }
+}
+
+/// Creates the main window (configured in tauri.conf.json, `create: false`)
+/// with the navigation and new-window guards.
+fn create_main_window(app: &tauri::App) -> tauri::Result<()> {
+    let config = app.config().app.windows.iter().find(|w| w.label == "main").cloned().unwrap_or_default();
+    tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?
+        .on_navigation(|url| {
+            let allowed = is_app_url(url);
+            #[cfg(debug_assertions)]
+            if !allowed {
+                eprintln!("[gnotes] blocked navigation to {url}");
+            }
+            allowed
+        })
+        .on_new_window(|_url, _features| tauri::webview::NewWindowResponse::Deny)
+        .build()?;
+    Ok(())
+}
+
 /// Background thread that locks the vault after the configured idle time.
 fn spawn_auto_lock(app: AppHandle) {
     std::thread::spawn(move || {
@@ -514,10 +545,8 @@ fn spawn_auto_lock(app: AppHandle) {
                 continue;
             }
             let idle = state.last_activity.lock().unwrap().elapsed();
-            if idle >= Duration::from_secs(minutes * 60) {
-                if state.lock_vault() {
-                    let _ = app.emit("vault-locked", "inactivity");
-                }
+            if idle >= Duration::from_secs(minutes * 60) && state.lock_vault() {
+                let _ = app.emit("vault-locked", "inactivity");
             }
         }
     });
@@ -543,6 +572,7 @@ pub fn run() {
                 close_gen: AtomicU64::new(0),
                 close_acked: AtomicBool::new(false),
             });
+            create_main_window(app)?;
             spawn_auto_lock(app.handle().clone());
             #[cfg(target_os = "linux")]
             session_lock::spawn(app.handle().clone());
@@ -593,10 +623,35 @@ pub fn run() {
         .run(|app, event| {
             // Covers every exit path (e.g. Ctrl+Q from the OS, app.exit):
             // drop the vault so the key is zeroized.
-            if let RunEvent::Exit = event {
-                if let Some(state) = app.try_state::<AppState>() {
-                    state.lock_vault();
-                }
+            if let RunEvent::Exit = event
+                && let Some(state) = app.try_state::<AppState>()
+            {
+                state.lock_vault();
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn allowed(url: &str) -> bool {
+        is_app_url(&tauri::Url::parse(url).unwrap())
+    }
+
+    #[test]
+    fn only_the_app_itself_may_be_shown() {
+        assert!(allowed("tauri://localhost/"));
+        assert!(allowed("tauri://localhost/index.html#h-intro"));
+        assert!(allowed("http://tauri.localhost/"));
+        assert!(allowed("http://127.0.0.1:1420/")); // tests build in debug
+
+        assert!(!allowed("https://evil.example/login"));
+        assert!(!allowed("http://tauri.localhost.evil.example/"));
+        assert!(!allowed("tauri://evil/"));
+        assert!(!allowed("http://127.0.0.1:8080/"));
+        assert!(!allowed("file:///etc/passwd"));
+        assert!(!allowed("gnotes://localhost/0b6a2f0e-1111-4222-8333-444455556666"));
+        assert!(!allowed("data:text/html,<h1>x</h1>"));
+    }
 }

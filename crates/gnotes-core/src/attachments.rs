@@ -50,12 +50,17 @@ pub fn find_refs(body: &str) -> Vec<(std::ops::Range<usize>, &str)> {
 /// Makes a user-supplied file name safe to store and to export.
 pub fn sanitize_name(name: &str) -> String {
     let base = name.rsplit(['/', '\\']).next().unwrap_or("");
-    let cleaned: String = base
-        .chars()
-        .map(|c| if c.is_control() || r#"/\:*?"<>|"#.contains(c) { '-' } else { c })
-        .collect();
+    let cleaned: String =
+        base.chars().map(|c| if c.is_control() || r#"/\:*?"<>|"#.contains(c) { '-' } else { c }).collect();
     let cleaned = cleaned.trim().trim_start_matches('.').trim_end_matches(['.', ' ']).to_string();
     if cleaned.is_empty() { "file".to_string() } else { cleaned.chars().take(200).collect() }
+}
+
+/// A plain `type/subtype` (no parameters, quotes or whitespace): it ends up
+/// in HTTP headers and in exported HTML, so nothing else is accepted.
+fn is_valid_mime(m: &str) -> bool {
+    let token = |t: &str| !t.is_empty() && t.bytes().all(|b| b.is_ascii_alphanumeric() || b"+-.".contains(&b));
+    m.len() < 100 && m.split_once('/').is_some_and(|(a, b)| token(a) && token(b))
 }
 
 /// MIME type from the file extension.
@@ -92,11 +97,12 @@ pub(crate) fn insert(conn: &Connection, name: &str, mime: Option<&str>, data: &[
         return Err(Error::TooLarge(format!("{name} ({} MB, limit {} MB)", data.len() >> 20, MAX_SIZE >> 20)));
     }
     let name = sanitize_name(name);
-    let mime = match mime.map(str::trim) {
-        Some(m) if !m.is_empty() && m.len() < 100 && m.contains('/') => m.to_ascii_lowercase(),
+    let mime = match mime.map(|m| m.trim().to_ascii_lowercase()) {
+        Some(m) if is_valid_mime(&m) => m,
         _ => mime_for_name(&name).to_string(),
     };
-    let meta = AttachmentMeta { id: uuid::Uuid::new_v4().to_string(), name, mime, size: data.len() as i64, created: now_ms() };
+    let meta =
+        AttachmentMeta { id: uuid::Uuid::new_v4().to_string(), name, mime, size: data.len() as i64, created: now_ms() };
     conn.execute(
         "INSERT INTO attachments(id, name, mime, size, data, created) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![meta.id, meta.name, meta.mime, meta.size, data, meta.created],
@@ -112,11 +118,15 @@ impl Vault {
 
     pub fn attachment_meta(&self, id: &str) -> Result<AttachmentMeta> {
         self.conn
-            .query_row(
-                "SELECT id, name, mime, size, created FROM attachments WHERE id = ?1",
-                [id],
-                |r| Ok(AttachmentMeta { id: r.get(0)?, name: r.get(1)?, mime: r.get(2)?, size: r.get(3)?, created: r.get(4)? }),
-            )
+            .query_row("SELECT id, name, mime, size, created FROM attachments WHERE id = ?1", [id], |r| {
+                Ok(AttachmentMeta {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    mime: r.get(2)?,
+                    size: r.get(3)?,
+                    created: r.get(4)?,
+                })
+            })
             .optional()?
             .ok_or_else(|| Error::NotFound(format!("attachment {id}")))
     }
@@ -148,6 +158,16 @@ impl Vault {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mime_types_are_strict() {
+        assert!(
+            is_valid_mime("image/png") && is_valid_mime("image/svg+xml") && is_valid_mime("application/vnd.ms-excel")
+        );
+        for bad in ["", "image", "/png", "image/", "text/html; charset=utf-8", "image/png\r\nX: y", "a\"b/c", "a b/c"] {
+            assert!(!is_valid_mime(bad), "{bad:?}");
+        }
+    }
 
     #[test]
     fn ids_refs_names() {

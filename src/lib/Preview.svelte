@@ -139,17 +139,26 @@
   let hover = $state<Hover | null>(null);
   let tip = $state<HTMLDivElement>();
 
-  function linkFrom(target: EventTarget | null): HTMLAnchorElement | null {
-    return target instanceof Element ? target.closest("a[href]") : null;
+  /**
+   * The link under `target`: <a>, image-map <area> or SVG <a> (whose URL may
+   * be in xlink:href). Every kind must be caught, or a click would navigate
+   * the app window itself (the backend blocks that too).
+   */
+  function linkFrom(target: EventTarget | null): Element | null {
+    return target instanceof Element ? target.closest("a, area") : null;
   }
 
-  function show(a: HTMLAnchorElement) {
+  function hrefOf(link: Element): string {
+    return link.getAttribute("href") ?? link.getAttributeNS("http://www.w3.org/1999/xlink", "href") ?? "";
+  }
+
+  function show(a: Element) {
     const r = a.getBoundingClientRect();
     // Prefer below the link; flip above if it would run off the bottom.
     const above = r.bottom + 90 > window.innerHeight;
     hover = {
-      info: describeLink(a.getAttribute("href") ?? "", a.textContent ?? ""),
-      title: a.dataset.title ?? "",
+      info: describeLink(hrefOf(a), a.textContent ?? ""),
+      title: a.getAttribute("data-title") ?? "",
       x: r.left,
       y: above ? r.top - 6 : r.bottom + 6,
       above,
@@ -187,7 +196,6 @@
     return () => document.removeEventListener("scroll", hide, true);
   });
 
-  // Never let the webview navigate away; open external links in the browser.
   // ------------------------------------------------------ right-click menu
   // Replaces the webview's own menu on images and links (its "open in new
   // window" would navigate the app away).
@@ -207,15 +215,17 @@
     const imageId = img?.dataset.attachment;
     if (imageId) items.push({ label: "Save image as…", run: () => onattachment?.(imageId) });
     if (link) {
-      const href = link.getAttribute("href") ?? "";
+      const href = hrefOf(link);
       const info = describeLink(href, "");
       if (info.kind === "attachment") {
-        if (info.id !== imageId) items.push({ label: "Save attachment as…", run: () => onattachment?.(info.id) });
+        if (info.id !== imageId)
+          items.push({ label: "Save attachment as…", run: () => onattachment?.(info.id) });
       } else if (isOpenable(info)) {
         items.push({ label: "Open in browser", run: () => openUrl(href).catch(console.error) });
         items.push({
           label: info.kind === "mail" ? "Copy email address" : "Copy link address",
-          run: () => navigator.clipboard.writeText(info.kind === "mail" ? info.address : href).catch(console.error),
+          run: () =>
+            navigator.clipboard.writeText(info.kind === "mail" ? info.address : href).catch(console.error),
         });
       }
     }
@@ -239,6 +249,12 @@
     if (menu && !(e?.target instanceof Node && menuEl?.contains(e.target))) menu = null;
   }
 
+  // Middle-click on a link would ask the webview for a new window: ignore it.
+  function onauxclick(e: MouseEvent) {
+    if (linkFrom(e.target)) e.preventDefault();
+  }
+
+  // Never let the webview navigate away; open external links in the browser.
   function onclick(e: MouseEvent) {
     if (onCodeTool(e)) return;
     const tagEl = e.target instanceof Element ? e.target.closest<HTMLElement>("[data-tag]") : null;
@@ -250,7 +266,7 @@
     if (!a) return;
     e.preventDefault();
     hover = null;
-    const href = a.getAttribute("href") ?? "";
+    const href = hrefOf(a);
     const info = describeLink(href, a.textContent ?? "");
     if (isOpenable(info)) {
       openUrl(href).catch(console.error);
@@ -264,18 +280,19 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions, a11y_mouse_events_have_key_events -->
 <div class="scroller" bind:this={scroller} onscroll={() => onscrollline?.(topLine())}>
-<article
-  class="markdown"
-  bind:this={article}
-  {onclick}
-  {oncontextmenu}
-  onmouseover={onover}
-  onmouseout={onout}
-  onfocusin={onover}
-  onfocusout={onout}
->
-  {@html html}
-</article>
+  <article
+    class="markdown"
+    bind:this={article}
+    {onclick}
+    {onauxclick}
+    {oncontextmenu}
+    onmouseover={onover}
+    onmouseout={onout}
+    onfocusin={onover}
+    onfocusout={onout}
+  >
+    {@html html}
+  </article>
 </div>
 
 <svelte:window
@@ -318,7 +335,9 @@
       {#if i.scheme === "http"}<div class="note">Not encrypted (http)</div>{/if}
       {#if i.idn}<div class="note">Internationalized domain, check for look-alike characters</div>{/if}
       {#if i.mismatch}
-        <div class="alert">⚠ Text says <strong>{i.mismatch}</strong>, but the link goes to <strong>{i.host}</strong></div>
+        <div class="alert">
+          ⚠ Text says <strong>{i.mismatch}</strong>, but the link goes to <strong>{i.host}</strong>
+        </div>
       {/if}
       <div class="hint">Click to open in your browser</div>
     {:else if i.kind === "mail"}

@@ -56,7 +56,9 @@ const UI_VALUE_MAX: usize = 64 * 1024;
 
 fn check_ui_key(key: &str) -> Result<()> {
     let ok = key.len() <= 64
-        && key.strip_prefix("ui.").is_some_and(|k| !k.is_empty() && k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'_'));
+        && key
+            .strip_prefix("ui.")
+            .is_some_and(|k| !k.is_empty() && k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'_'));
     if ok { Ok(()) } else { Err(Error::InvalidName(key.to_string())) }
 }
 
@@ -92,10 +94,7 @@ pub struct Vault {
 }
 
 pub(crate) fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
 fn read_salt(path: &Path) -> Result<[u8; SALT_LEN]> {
@@ -115,9 +114,7 @@ fn apply_key(conn: &Connection, key: &[u8; KEY_LEN], salt: &[u8; SALT_LEN]) -> R
     conn.execute_batch(&sql)?;
     match conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0)) {
         Ok(_) => Ok(()),
-        Err(rusqlite::Error::SqliteFailure(e, _)) if e.code == ErrorCode::NotADatabase => {
-            Err(Error::WrongPassword)
-        }
+        Err(rusqlite::Error::SqliteFailure(e, _)) if e.code == ErrorCode::NotADatabase => Err(Error::WrongPassword),
         Err(e) => Err(e.into()),
     }
 }
@@ -128,8 +125,13 @@ fn open_keyed(path: &Path, key: &[u8; KEY_LEN], salt: &[u8; SALT_LEN], create: b
         flags |= OpenFlags::SQLITE_OPEN_CREATE;
     }
     let conn = Connection::open_with_flags(path, flags)?;
+    // SQLCipher would print every failed decryption (a wrong password) to
+    // stderr; we report those as WrongPassword ourselves.
+    conn.execute_batch("PRAGMA cipher_log_level = NONE;")?;
     apply_key(&conn, key, salt)?;
-    conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA secure_delete = ON;")?;
+    // secure_delete: freed pages are zeroed. temp_store: temporary tables and
+    // indices stay in memory, never in (unencrypted) temp files on disk.
+    conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA secure_delete = ON; PRAGMA temp_store = MEMORY;")?;
     Ok(conn)
 }
 
@@ -259,10 +261,7 @@ impl Vault {
     /// not in the plain config file, because it reveals which notes exist.
     pub fn ui_get(&self, key: &str) -> Result<Option<String>> {
         check_ui_key(key)?;
-        Ok(self
-            .conn
-            .query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| r.get(0))
-            .optional()?)
+        Ok(self.conn.query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| r.get(0)).optional()?)
     }
 
     pub fn ui_set(&mut self, key: &str, value: &str) -> Result<()> {
@@ -283,13 +282,9 @@ impl Vault {
     pub fn tree(&self) -> Result<Tree> {
         let mut st = self.conn.prepare("SELECT path FROM folders ORDER BY path COLLATE NOCASE")?;
         let folders = st.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
-        let mut st = self
-            .conn
-            .prepare("SELECT id, folder, title, updated FROM notes ORDER BY title COLLATE NOCASE")?;
+        let mut st = self.conn.prepare("SELECT id, folder, title, updated FROM notes ORDER BY title COLLATE NOCASE")?;
         let notes = st
-            .query_map([], |r| {
-                Ok(NoteMeta { id: r.get(0)?, folder: r.get(1)?, title: r.get(2)?, updated: r.get(3)? })
-            })?
+            .query_map([], |r| Ok(NoteMeta { id: r.get(0)?, folder: r.get(1)?, title: r.get(2)?, updated: r.get(3)? }))?
             .collect::<rusqlite::Result<_>>()?;
         Ok(Tree { folders, notes })
     }
@@ -298,19 +293,11 @@ impl Vault {
         if path.is_empty() {
             return Ok(true);
         }
-        Ok(self
-            .conn
-            .query_row("SELECT 1 FROM folders WHERE path = ?1", [path], |_| Ok(()))
-            .optional()?
-            .is_some())
+        Ok(self.conn.query_row("SELECT 1 FROM folders WHERE path = ?1", [path], |_| Ok(())).optional()?.is_some())
     }
 
     fn require_folder(&self, path: &str) -> Result<()> {
-        if self.folder_exists(path)? {
-            Ok(())
-        } else {
-            Err(Error::NotFound(format!("folder {path:?}")))
-        }
+        if self.folder_exists(path)? { Ok(()) } else { Err(Error::NotFound(format!("folder {path:?}"))) }
     }
 
     // ------------------------------------------------------------- folders
@@ -381,10 +368,7 @@ impl Vault {
             "DELETE FROM notes WHERE folder = ?1 OR substr(folder, 1, ?2 + 1) = ?1 || '/'",
             params![path, n],
         )?;
-        tx.execute(
-            "DELETE FROM folders WHERE path = ?1 OR substr(path, 1, ?2 + 1) = ?1 || '/'",
-            params![path, n],
-        )?;
+        tx.execute("DELETE FROM folders WHERE path = ?1 OR substr(path, 1, ?2 + 1) = ?1 || '/'", params![path, n])?;
         tx.commit()?;
         Ok(notes)
     }
@@ -437,20 +421,16 @@ impl Vault {
 
     pub fn get_note(&self, id: &str) -> Result<Note> {
         self.conn
-            .query_row(
-                "SELECT id, folder, title, body, created, updated FROM notes WHERE id = ?1",
-                [id],
-                |r| {
-                    Ok(Note {
-                        id: r.get(0)?,
-                        folder: r.get(1)?,
-                        title: r.get(2)?,
-                        body: r.get(3)?,
-                        created: r.get(4)?,
-                        updated: r.get(5)?,
-                    })
-                },
-            )
+            .query_row("SELECT id, folder, title, body, created, updated FROM notes WHERE id = ?1", [id], |r| {
+                Ok(Note {
+                    id: r.get(0)?,
+                    folder: r.get(1)?,
+                    title: r.get(2)?,
+                    body: r.get(3)?,
+                    created: r.get(4)?,
+                    updated: r.get(5)?,
+                })
+            })
             .optional()?
             .ok_or_else(|| Error::NotFound(format!("note {id}")))
     }
@@ -458,9 +438,7 @@ impl Vault {
     /// Saves a note's body. Returns the new `updated` timestamp.
     pub fn save_note(&mut self, id: &str, body: &str) -> Result<i64> {
         let now = now_ms();
-        let n = self
-            .conn
-            .execute("UPDATE notes SET body = ?2, updated = ?3 WHERE id = ?1", params![id, body, now])?;
+        let n = self.conn.execute("UPDATE notes SET body = ?2, updated = ?3 WHERE id = ?1", params![id, body, now])?;
         if n == 0 {
             return Err(Error::NotFound(format!("note {id}")));
         }
