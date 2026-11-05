@@ -22,7 +22,8 @@
   import Search from "$lib/Search.svelte";
   import Tags from "$lib/Tags.svelte";
   import Outline from "$lib/Outline.svelte";
-  import Editor from "$lib/Editor.svelte";
+  import Editor, { type EditorSnapshot } from "$lib/Editor.svelte";
+  import TabBar from "$lib/TabBar.svelte";
   import Preview from "$lib/Preview.svelte";
   import Modal, { ask, askImportTarget, askSecret, confirmDanger, showInfo } from "$lib/Modal.svelte";
   import { restoreZoom, stepZoom, zoomKey } from "$lib/zoom";
@@ -33,6 +34,14 @@
   let status = $state<Status | null>(null);
   let tree = $state<Tree>({ folders: [], notes: [] });
   let current = $state<Note | null>(null);
+  // Open notes, like browser tabs. `current` is the note of tabs[active];
+  // active is -1 on the start view.
+  let tabs = $state<NoteMeta[]>([]);
+  let active = $state(-1);
+  // Editor state (text, cursor, undo history, scroll) per note id, so
+  // switching tabs or views doesn't lose undo. Not reactive on purpose.
+  const snapshots = new Map<string, EditorSnapshot>();
+  let tabsRestored = false;
   let previewSource = $state("");
   let selectedFolder = $state("");
   let saveState = $state<"saved" | "dirty" | "saving" | "error">("saved");
@@ -162,6 +171,7 @@
   }
   async function loadTree() {
     tree = await api.tree();
+    await syncTabs();
     await loadTags();
   }
   async function loadTags() {
@@ -228,14 +238,134 @@
 
   // ----------------------------------------------------------------- notes
 
-  async function openNote(meta: NoteMeta) {
-    if (current?.id === meta.id) return;
+  // ------------------------------------------------------------------ tabs
+
+  /**
+   * Opens a note: in the current tab (replacing it), or in a new tab when
+   * `newTab` is set. A note that is already open just gets its tab focused.
+   */
+  async function openNote(meta: NoteMeta, newTab = false) {
+    const open = tabs.findIndex((t) => t.id === meta.id);
+    if (open >= 0) return activateTab(open);
     await flush();
-    const note = await api.noteGet(meta.id);
+    const entry = { id: meta.id, folder: meta.folder, title: meta.title, updated: meta.updated };
+    if (newTab || active < 0) {
+      tabs.push(entry);
+      await loadTab(tabs.length - 1);
+    } else {
+      snapshots.delete(tabs[active].id);
+      tabs[active] = entry;
+      await loadTab(active);
+    }
+  }
+
+  async function activateTab(i: number) {
+    if (i === active && current) return;
+    await flush();
+    await loadTab(i);
+  }
+
+  /** Shows tabs[i] (pending edits must already be saved). */
+  async function loadTab(i: number) {
+    const note = await api.noteGet(tabs[i].id);
+    active = i;
     current = note;
     draft = previewSource = note.body;
     viewTop = 0;
     saveState = "saved";
+    saveTabs();
+  }
+
+  async function closeTab(i: number) {
+    if (i < 0 || i >= tabs.length) return;
+    if (i === active) await flush();
+    const [closed] = tabs.splice(i, 1);
+    snapshots.delete(closed.id);
+    if (i === active) {
+      clearTimeout(saveTimer);
+      current = null;
+      active = -1;
+      if (tabs.length) await loadTab(Math.min(i, tabs.length - 1));
+      else showStart();
+    } else if (i < active) {
+      active--;
+    }
+    saveTabs();
+  }
+
+  function cycleTab(step: number) {
+    if (!tabs.length) return;
+    const from = active < 0 ? (step > 0 ? -1 : 0) : active;
+    attempt(() => activateTab((from + step + tabs.length) % tabs.length));
+  }
+
+  /** Clears the editor area (start view); tabs stay open. */
+  function showStart() {
+    clearTimeout(saveTimer);
+    current = null;
+    active = -1;
+    draft = previewSource = "";
+    saveState = "saved";
+    viewTop = 0;
+  }
+
+  /** The editor's saved state for a note, if it still matches its text. */
+  function snapshotFor(id: string, text: string): EditorSnapshot | undefined {
+    const snap = snapshots.get(id);
+    if (snap && snap.state.doc.toString() === text) return snap;
+    snapshots.delete(id);
+    return undefined;
+  }
+
+  /**
+   * After the tree changed: drop tabs of deleted notes, refresh renamed or
+   * moved ones, and restore the tabs saved in the vault after an unlock.
+   */
+  async function syncTabs() {
+    const byId = new Map(tree.notes.map((n) => [n.id, n]));
+    if (!tabsRestored) {
+      tabsRestored = true;
+      await restoreTabs(byId);
+      return;
+    }
+    const activeId = active >= 0 ? tabs[active]?.id : undefined;
+    const next = tabs.filter((t) => byId.has(t.id)).map((t) => ({ ...byId.get(t.id)! }));
+    for (const t of tabs) if (!byId.has(t.id)) snapshots.delete(t.id);
+    const changed = next.length !== tabs.length || next.some((t, i) => t.title !== tabs[i].title || t.folder !== tabs[i].folder);
+    if (!changed) return;
+    const oldActive = active;
+    tabs = next;
+    if (activeId && !byId.has(activeId)) {
+      // The open note was deleted: show a neighbour.
+      showStart();
+      if (tabs.length) await loadTab(Math.min(Math.max(oldActive, 0), tabs.length - 1));
+    } else {
+      active = activeId ? tabs.findIndex((t) => t.id === activeId) : -1;
+    }
+    saveTabs();
+  }
+
+  // The open tabs are stored encrypted inside the vault ("ui.tabs"), never
+  // in the plain config file: note ids would reveal what the vault holds.
+  type SavedTabs = { ids: string[]; active: number };
+
+  function saveTabs() {
+    const value: SavedTabs = { ids: tabs.map((t) => t.id), active };
+    api.uiSet("ui.tabs", JSON.stringify(value)).catch(() => {});
+  }
+
+  async function restoreTabs(byId: Map<string, NoteMeta>) {
+    let saved: SavedTabs | null = null;
+    try {
+      saved = JSON.parse((await api.uiGet("ui.tabs")) ?? "null");
+    } catch {}
+    if (!saved || !Array.isArray(saved.ids)) return;
+    const wanted = saved.ids.filter((id) => typeof id === "string" && byId.has(id));
+    tabs = wanted.map((id) => ({ ...byId.get(id)! }));
+    const activeId = saved.ids[saved.active];
+    const i = tabs.findIndex((t) => t.id === activeId);
+    if (i >= 0) await loadTab(i).catch(() => showStart());
+    else if (tabs.length) active = -1;
   }
 
   /** Opens a search result, scrolled to (and selecting) the matching line. */
@@ -274,11 +404,8 @@
   async function goHome() {
     await attempt(async () => {
       await flush();
-      clearTimeout(saveTimer);
-      current = null;
-      draft = previewSource = "";
-      saveState = "saved";
-      viewTop = 0;
+      showStart();
+      saveTabs();
     });
   }
 
@@ -286,7 +413,7 @@
     await attempt(async () => {
       const meta = await api.noteCreate(selectedFolder);
       await loadTree();
-      await openNote(meta);
+      await openNote(meta, true);
       if (mode === "preview") setMode("split");
     });
   }
@@ -314,10 +441,7 @@
   async function deleteNote(n: NoteMeta) {
     if (!(await confirmDanger(`Delete "${n.title}"?`, "This cannot be undone."))) return;
     await attempt(async () => {
-      if (current?.id === n.id) {
-        clearTimeout(saveTimer);
-        current = null;
-      }
+      if (current?.id === n.id) clearTimeout(saveTimer); // its tab closes after the reload
       await api.noteDelete(n.id);
       await loadTree();
     });
@@ -361,8 +485,7 @@
     if (!ok) return;
     await attempt(async () => {
       if (current && (current.folder === path || current.folder.startsWith(path + "/"))) {
-        clearTimeout(saveTimer);
-        current = null;
+        clearTimeout(saveTimer); // tabs of deleted notes close after the reload
       }
       await api.folderDelete(path);
       if (selectedFolder === path || selectedFolder.startsWith(path + "/")) selectedFolder = "";
@@ -500,11 +623,11 @@
       await loadTree();
       // The open note may have been rewritten: reload it so the editor
       // (and autosave) work on the repaired text.
-      if (current) {
-        const meta = { ...current };
+      if (current && active >= 0) {
+        const i = active;
         current = null;
         await tick();
-        await openNote(meta);
+        await loadTab(i);
       }
       const msg = r.links
         ? `Copied ${r.attachments} images into the vault and updated ${r.links} references in ${r.notes} notes.`
@@ -576,6 +699,10 @@
   function onLocked() {
     clearTimeout(saveTimer);
     current = null;
+    tabs = [];
+    active = -1;
+    snapshots.clear();
+    tabsRestored = false;
     draft = previewSource = "";
     tree = { folders: [], notes: [] };
     tagList = [];
@@ -682,6 +809,18 @@
     }
     if (!status?.unlocked || !(e.ctrlKey || e.metaKey)) return;
     const k = e.key.toLowerCase();
+    if (k === "tab") {
+      e.preventDefault();
+      cycleTab(e.shiftKey ? -1 : 1);
+      return;
+    }
+    if (!e.shiftKey && /^[1-9]$/.test(k) && tabs.length) {
+      // Ctrl+1…8: that tab; Ctrl+9: the last one (as in browsers).
+      e.preventDefault();
+      const i = k === "9" ? tabs.length - 1 : Number(k) - 1;
+      if (i < tabs.length) attempt(() => activateTab(i));
+      return;
+    }
     if (e.shiftKey) {
       if (k === "s") (e.preventDefault(), toggleSync());
       else if (k === "f") (e.preventDefault(), toggleSearch(true));
@@ -691,6 +830,7 @@
     if (k === "n") (e.preventDefault(), newNote());
     else if (k === "s") (e.preventDefault(), flush());
     else if (k === "l") (e.preventDefault(), lock());
+    else if (k === "w") (e.preventDefault(), active >= 0 && attempt(() => closeTab(active)));
     else if (k === "e") (e.preventDefault(), setMode(MODES[(MODES.indexOf(mode) + 1) % MODES.length]));
   }
 
@@ -728,6 +868,9 @@
     [["Ctrl", "Shift", "F"], "Search (#tag for tags)"],
     [["Ctrl", "Shift", "O"], "Outline"],
     [["Ctrl", "E"], "Switch view: edit / split / preview"],
+    [["Ctrl", "Tab"], "Next tab (Shift: previous)"],
+    [["Ctrl", "W"], "Close tab"],
+    [["Ctrl", "1…9"], "Go to tab"],
     [["Ctrl", "S"], "Save now"],
     [["Ctrl", "Shift", "S"], "Scroll sync"],
     [["Ctrl", "L"], "Lock"],
@@ -782,7 +925,7 @@
         {tree}
         selectedId={current?.id ?? null}
         bind:selectedFolder
-        onopen={(n) => attempt(() => openNote(n))}
+        onopen={(n, newTab) => attempt(() => openNote(n, newTab))}
         onrenameNote={renameNote}
         ondeleteNote={deleteNote}
         onrenameFolder={renameFolder}
@@ -817,6 +960,15 @@
     </aside>
 
     <main>
+      {#if tabs.length}
+        <TabBar
+          {tabs}
+          {active}
+          dirty={saveState === "dirty" || saveState === "saving" || saveState === "error"}
+          onselect={(i) => attempt(() => activateTab(i))}
+          onclose={(i) => attempt(() => closeTab(i))}
+        />
+      {/if}
       {#if current}
         <header class="note-head">
           <button class="crumb" title="Rename / move" onclick={() => current && renameNote(current)}>
@@ -856,9 +1008,15 @@
           </div>
           {#key current.id}
             {#if mode !== "preview"}
+              {@const tabId = current.id}
               <section class="pane edit"><Editor
                   bind:this={editorRef}
                   doc={currentDraft()}
+                  initial={snapshotFor(tabId, currentDraft())}
+                  onsnapshot={(snap) => {
+                    // Only for tabs still open: a closed tab's text shouldn't linger.
+                    if (tabs.some((t) => t.id === tabId)) snapshots.set(tabId, snap);
+                  }}
                   onchange={onEdit}
                   onscrollline={(l) => {
                     viewTop = l;

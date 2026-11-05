@@ -109,6 +109,9 @@ export const api = {
   noteDelete: (id: string) => invoke<void>("note_delete", { id }),
   search: (query: string) => invoke<SearchResults>("search", { query }),
   tags: () => invoke<TagCount[]>("tags"),
+  /** Small UI state stored encrypted inside the vault (keys "ui.*"). */
+  uiGet: (key: string) => invoke<string | null>("ui_get", { key }),
+  uiSet: (key: string, value: string) => invoke<void>("ui_set", { key, value }),
 };
 
 /** URL the preview loads an attachment from (served from the unlocked vault). */

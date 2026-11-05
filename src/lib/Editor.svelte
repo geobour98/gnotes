@@ -1,7 +1,13 @@
+<script lang="ts" module>
+  import type { EditorState as State } from "@codemirror/state";
+  /** Everything needed to resume editing a note: text, cursor, undo history, scroll. */
+  export type EditorSnapshot = { state: State; scrollTop: number };
+</script>
+
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { EditorView, keymap, placeholder } from "@codemirror/view";
-  import { EditorState } from "@codemirror/state";
+  import { EditorState, StateEffect } from "@codemirror/state";
   import { basicSetup } from "codemirror";
   import { indentWithTab } from "@codemirror/commands";
   import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
@@ -11,11 +17,17 @@
 
   let {
     doc,
+    initial,
     onchange,
     onscrollline,
     onpastefiles,
+    onsnapshot,
   }: {
     doc: string;
+    /** Resume from a snapshot (used instead of `doc`). */
+    initial?: EditorSnapshot;
+    /** Receives the editor's state when it is destroyed (tab switch, view change). */
+    onsnapshot?: (s: EditorSnapshot) => void;
     /** Files pasted into the editor (e.g. a screenshot). */
     onpastefiles?: (files: File[]) => void;
     onchange: (text: string) => void;
@@ -129,39 +141,50 @@
     view.dispatch({ changes: { from: l.from, to: l.to, insert: text } });
   }
 
-  onMount(() => {
-    view = new EditorView({
-      parent: host,
-      state: EditorState.create({
-        doc,
-        extensions: [
-          basicSetup,
-          keymap.of([indentWithTab]),
-          markdown({ base: markdownLanguage, codeLanguages: languages }),
-          syntaxHighlighting(highlight),
-          EditorView.lineWrapping,
-          placeholder("Start writing…"),
-          theme,
-          EditorView.domEventHandlers({
-            paste(e) {
-              const files = [...(e.clipboardData?.files ?? [])];
-              if (!files.length || !onpastefiles) return false;
-              e.preventDefault();
-              onpastefiles(files);
-              return true;
-            },
-          }),
-          EditorView.updateListener.of((u) => {
-            if (u.docChanged) onchange(u.state.doc.toString());
-          }),
-        ],
+  // Built fresh for every editor instance: the callbacks belong to it.
+  function extensions() {
+    return [
+      basicSetup,
+      keymap.of([indentWithTab]),
+      markdown({ base: markdownLanguage, codeLanguages: languages }),
+      syntaxHighlighting(highlight),
+      EditorView.lineWrapping,
+      placeholder("Start writing…"),
+      theme,
+      EditorView.domEventHandlers({
+        paste(e) {
+          const files = [...(e.clipboardData?.files ?? [])];
+          if (!files.length || !onpastefiles) return false;
+          e.preventDefault();
+          onpastefiles(files);
+          return true;
+        },
       }),
-    });
+      EditorView.updateListener.of((u) => {
+        if (u.docChanged) onchange(u.state.doc.toString());
+      }),
+    ];
+  }
+
+  onMount(() => {
+    // A snapshot keeps its text, selection and undo history; only the
+    // extensions (whose callbacks point at the old instance) are replaced.
+    const state = initial
+      ? initial.state.update({ effects: StateEffect.reconfigure.of(extensions()) }).state
+      : EditorState.create({ doc, extensions: extensions() });
+    view = new EditorView({ parent: host, state });
+    if (initial) {
+      const top = initial.scrollTop;
+      requestAnimationFrame(() => view && (view.scrollDOM.scrollTop = top));
+    }
     view.scrollDOM.addEventListener("scroll", () => onscrollline?.(topLine()), { passive: true });
     view.focus();
   });
 
-  onDestroy(() => view?.destroy());
+  onDestroy(() => {
+    if (view) onsnapshot?.({ state: view.state, scrollTop: view.scrollDOM.scrollTop });
+    view?.destroy();
+  });
 </script>
 
 <div class="editor" bind:this={host}></div>

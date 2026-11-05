@@ -19,7 +19,8 @@
     tree: Tree;
     selectedId: string | null;
     selectedFolder: string;
-    onopen: (n: NoteMeta) => void;
+    /** Open a note; `newTab` for Ctrl+click / middle-click. */
+    onopen: (n: NoteMeta, newTab: boolean) => void;
     onrenameNote: (n: NoteMeta) => void;
     ondeleteNote: (n: NoteMeta) => void;
     onrenameFolder: (path: string) => void;
@@ -118,11 +119,19 @@
       role="treeitem"
       aria-selected={selectedId === n.id}
       tabindex="0"
-      onclick={() => {
+      title="Ctrl+click or middle-click: open in a new tab"
+      onclick={(e) => {
         selectedFolder = n.folder;
-        onopen(n);
+        onopen(n, e.ctrlKey || e.metaKey);
       }}
-      onkeydown={(e) => e.key === "Enter" && onopen(n)}
+      onmousedown={(e) => e.button === 1 && e.preventDefault()}
+      onauxclick={(e) => {
+        if (e.button !== 1) return;
+        e.preventDefault();
+        selectedFolder = n.folder;
+        onopen(n, true);
+      }}
+      onkeydown={(e) => e.key === "Enter" && onopen(n, e.ctrlKey || e.metaKey)}
     >
       <span class="name">{n.title}</span>
       <span class="actions">

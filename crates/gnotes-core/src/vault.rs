@@ -51,6 +51,15 @@ CREATE TABLE attachments (
 );
 ";
 
+/// UI state keys live under "ui." so they never clash with internal meta.
+const UI_VALUE_MAX: usize = 64 * 1024;
+
+fn check_ui_key(key: &str) -> Result<()> {
+    let ok = key.len() <= 64
+        && key.strip_prefix("ui.").is_some_and(|k| !k.is_empty() && k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'_'));
+    if ok { Ok(()) } else { Err(Error::InvalidName(key.to_string())) }
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct NoteMeta {
     pub id: String,
@@ -242,6 +251,31 @@ impl Vault {
                 Err(e)
             }
         }
+    }
+
+    // ------------------------------------------------------------ ui state
+
+    /// Reads a UI state value (e.g. the open tabs). Kept inside the vault,
+    /// not in the plain config file, because it reveals which notes exist.
+    pub fn ui_get(&self, key: &str) -> Result<Option<String>> {
+        check_ui_key(key)?;
+        Ok(self
+            .conn
+            .query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| r.get(0))
+            .optional()?)
+    }
+
+    pub fn ui_set(&mut self, key: &str, value: &str) -> Result<()> {
+        check_ui_key(key)?;
+        if value.len() > UI_VALUE_MAX {
+            return Err(Error::TooLarge(format!("ui state {key:?}")));
+        }
+        self.conn.execute(
+            "INSERT INTO meta (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
     }
 
     // ---------------------------------------------------------------- tree

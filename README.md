@@ -90,7 +90,8 @@ cross-compiled.
 
 ## Shortcuts
 
-Ctrl+N new note · Ctrl+Shift+F search (`#tag` for tags) · Ctrl+Shift+O outline · Ctrl+E cycle edit/split/preview · Ctrl+S save now ·
+Ctrl+N new note · Ctrl+Tab / Ctrl+Shift+Tab switch tabs · Ctrl+W close tab · Ctrl+1…9 go to tab ·
+Ctrl+Shift+F search (`#tag` for tags) · Ctrl+Shift+O outline · Ctrl+E cycle edit/split/preview · Ctrl+S save now ·
 Ctrl+Shift+S toggle scroll sync (split view) · Ctrl+L lock ·
 Ctrl + / Ctrl − / Ctrl+0 and Ctrl+wheel zoom
 

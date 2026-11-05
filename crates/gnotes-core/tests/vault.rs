@@ -388,3 +388,20 @@ fn tags_and_tag_search() {
     // "#42" is not a tag, so it is searched as text.
     assert_eq!(ids("#42"), [c.id.clone()]);
 }
+
+#[test]
+fn ui_state_is_stored_in_the_vault() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("v.gnotes");
+    {
+        let mut v = Vault::create(&path, "pw").unwrap();
+        assert_eq!(v.ui_get("ui.tabs").unwrap(), None);
+        v.ui_set("ui.tabs", r#"{"ids":["a"]}"#).unwrap();
+        v.ui_set("ui.tabs", r#"{"ids":["a","b"]}"#).unwrap();
+        assert!(v.ui_set("salt", "x").is_err(), "only ui.* keys");
+        assert!(v.ui_get("ui.").is_err());
+        assert!(v.ui_set("ui.big", &"x".repeat(70_000)).is_err());
+    }
+    let v = Vault::open(&path, "pw").unwrap();
+    assert_eq!(v.ui_get("ui.tabs").unwrap().as_deref(), Some(r#"{"ids":["a","b"]}"#));
+}

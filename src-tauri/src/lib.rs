@@ -454,6 +454,16 @@ fn search(state: State<'_, AppState>, query: String) -> CmdResult<SearchResults>
     state.with_vault(|v| v.search(&query))
 }
 
+#[tauri::command]
+fn ui_get(state: State<'_, AppState>, key: String) -> CmdResult<Option<String>> {
+    state.with_vault(|v| v.ui_get(&key))
+}
+
+#[tauri::command]
+fn ui_set(state: State<'_, AppState>, key: String, value: String) -> CmdResult<()> {
+    state.with_vault(|v| v.ui_set(&key, &value))
+}
+
 #[tauri::command(async)]
 fn tags(state: State<'_, AppState>) -> CmdResult<Vec<TagCount>> {
     state.with_vault(|v| v.tags())
@@ -556,6 +566,8 @@ pub fn run() {
             note_get,
             search,
             tags,
+            ui_get,
+            ui_set,
             note_save,
             note_move,
             note_delete,
