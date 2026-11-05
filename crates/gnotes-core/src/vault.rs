@@ -115,7 +115,7 @@ fn apply_key(conn: &Connection, key: &[u8; KEY_LEN], salt: &[u8; SALT_LEN]) -> R
     match conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0)) {
         Ok(_) => Ok(()),
         Err(rusqlite::Error::SqliteFailure(e, _)) if e.code == ErrorCode::NotADatabase => Err(Error::WrongPassword),
-        Err(e) => Err(e.into()),
+        Err(e) => Err(busy_is_in_use(e)),
     }
 }
 
@@ -125,6 +125,8 @@ fn open_keyed(path: &Path, key: &[u8; KEY_LEN], salt: &[u8; SALT_LEN], create: b
         flags |= OpenFlags::SQLITE_OPEN_CREATE;
     }
     let conn = Connection::open_with_flags(path, flags)?;
+    // A vault open elsewhere is reported at once, not after a 5 s wait.
+    conn.busy_timeout(std::time::Duration::ZERO)?;
     // SQLCipher would print every failed decryption (a wrong password) to
     // stderr; we report those as WrongPassword ourselves.
     conn.execute_batch("PRAGMA cipher_log_level = NONE;")?;
@@ -132,7 +134,23 @@ fn open_keyed(path: &Path, key: &[u8; KEY_LEN], salt: &[u8; SALT_LEN], create: b
     // secure_delete: freed pages are zeroed. temp_store: temporary tables and
     // indices stay in memory, never in (unencrypted) temp files on disk.
     conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA secure_delete = ON; PRAGMA temp_store = MEMORY;")?;
+    // Hold an exclusive lock on the file for as long as the vault is open:
+    // no other process (a second gnotes, a sync tool writing to it) can read
+    // or write it meanwhile. A second writer could corrupt the vault, and
+    // after a password change it would even write with the old key.
+    conn.execute_batch("PRAGMA locking_mode = EXCLUSIVE; BEGIN EXCLUSIVE; COMMIT;").map_err(busy_is_in_use)?;
     Ok(conn)
+}
+
+fn busy_is_in_use(e: rusqlite::Error) -> Error {
+    match &e {
+        rusqlite::Error::SqliteFailure(f, _)
+            if matches!(f.code, ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked) =>
+        {
+            Error::VaultInUse
+        }
+        _ => Error::Db(e),
+    }
 }
 
 fn map_unique(e: rusqlite::Error, what: impl Into<String>) -> Error {
@@ -211,18 +229,31 @@ impl Vault {
         Ok(())
     }
 
-    /// Re-encrypts the vault under a new master password.
+    /// Whether `password` is this vault's master password. Compares derived
+    /// keys in memory (no second connection, nothing written).
+    pub fn password_matches(&self, password: &str) -> Result<bool> {
+        let key = crypto::derive_key(password, &self.salt)?;
+        // Constant time: don't leak how much of the key matched.
+        Ok(key.iter().zip(self.key.iter()).fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0)
+    }
+
+    /// Re-encrypts the vault under a new master password. The vault stays
+    /// open with the new key; [`Vault::close_verified`] confirms it on disk.
     pub fn change_password(&mut self, new_password: &str) -> Result<()> {
         let key = crypto::derive_key(new_password, &self.salt)?;
         let lit = crypto::sqlcipher_key_literal(&key, &self.salt);
         let sql = Zeroizing::new(format!("PRAGMA rekey = \"{}\";", lit.as_str()));
         self.conn.execute_batch(&sql)?;
         self.key = key;
-        // Don't trust the re-key blindly: the file on disk must now open
-        // with the new key (and only then is the change reported as done).
-        open_keyed(&self.path, &self.key, &self.salt, false)
-            .map_err(|e| Error::Crypto(format!("password change could not be verified: {e}")))?;
         Ok(())
+    }
+
+    /// Closes the vault (releasing the file and wiping the key) after
+    /// checking that the file on disk opens with the current key.
+    pub fn close_verified(self) -> Result<()> {
+        let Vault { conn, path, salt, key } = self;
+        conn.close().map_err(|(_, e)| Error::Db(e))?;
+        open_keyed(&path, &key, &salt, false)?.close().map_err(|(_, e)| Error::Db(e))
     }
 
     /// Writes an encrypted copy of the vault to `dest` (same password) and

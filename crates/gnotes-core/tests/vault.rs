@@ -53,10 +53,27 @@ fn change_password() {
     let path = dir.path().join("v.gnotes");
     let mut v = Vault::create(&path, "old").unwrap();
     v.create_note("", Some("n")).unwrap();
+    assert!(v.password_matches("old").unwrap());
+    assert!(!v.password_matches("ol").unwrap());
     v.change_password("new").unwrap();
-    drop(v);
+    assert!(v.password_matches("new").unwrap() && !v.password_matches("old").unwrap());
+    v.close_verified().unwrap();
     assert!(matches!(Vault::open(&path, "old"), Err(Error::WrongPassword)));
     assert_eq!(Vault::open(&path, "new").unwrap().tree().unwrap().notes.len(), 1);
+}
+
+#[test]
+fn a_vault_can_only_be_open_once() {
+    let dir = tmp();
+    let path = dir.path().join("v.gnotes");
+    let v = Vault::create(&path, "pw").unwrap();
+    // Another opener (another gnotes process) is refused while it is open...
+    assert!(matches!(Vault::open(&path, "pw"), Err(Error::VaultInUse)));
+    // ...and a backup still works (it copies the file).
+    v.backup_to(dir.path().join("b.gnotes")).unwrap();
+    drop(v);
+    // Closed: it opens again.
+    Vault::open(&path, "pw").unwrap();
 }
 
 #[test]
@@ -72,6 +89,7 @@ fn backup_is_encrypted_and_opens() {
     drop(v);
     let b = Vault::open(&backup, "pw").unwrap();
     assert_eq!(b.get_note(&n.id).unwrap().body, "backed up");
+    drop(b);
     assert!(matches!(Vault::open(&backup, "nope"), Err(Error::WrongPassword)));
 }
 

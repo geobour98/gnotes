@@ -268,23 +268,40 @@ async fn change_password(state: State<'_, AppState>, current: String, new: Strin
     if new.chars().count() < 8 {
         return Err("password must be at least 8 characters".into());
     }
-    let path = state.with_vault(|v| Ok(v.path().to_path_buf()))?;
-    // Confirm the current password before re-keying.
-    tauri::async_runtime::spawn_blocking(move || Vault::open(&path, &current).map(drop))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|_| {
-            #[cfg(debug_assertions)]
-            eprintln!("[gnotes] change password: current password rejected");
-            "current password is wrong".to_string()
-        })?;
-    let result = state.with_vault(|v| v.change_password(&new));
+    // Take the vault out (it counts as locked meanwhile). On success it is
+    // closed for good and the UI goes back to the unlock screen, so nothing
+    // decrypted or keyed with the old password survives in memory.
+    let vault = state.vault.lock().unwrap().take().ok_or("vault is locked")?;
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+        let mut vault = vault;
+        match vault.password_matches(&current) {
+            Ok(true) => {}
+            Ok(false) => return Err((Some(Box::new(vault)), "current password is wrong".to_string())),
+            Err(e) => return Err((Some(Box::new(vault)), e.to_string())),
+        }
+        if let Err(e) = vault.change_password(&new) {
+            return Err((Some(Box::new(vault)), e.to_string())); // re-key is atomic: the old key still works
+        }
+        vault.close_verified().map_err(|e| (None, format!("password change could not be verified: {e}")))
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
     #[cfg(debug_assertions)]
-    match &result {
-        Ok(()) => eprintln!("[gnotes] change password: done and verified"),
-        Err(e) => eprintln!("[gnotes] change password FAILED: {e}"),
+    match &outcome {
+        Ok(()) => eprintln!("[gnotes] change password: done, verified, vault closed"),
+        Err((_, e)) => eprintln!("[gnotes] change password failed: {e}"),
     }
-    result
+    match outcome {
+        Ok(()) => Ok(()),
+        Err((vault, msg)) => {
+            if let Some(vault) = vault {
+                *state.vault.lock().unwrap() = Some(*vault); // still unlocked, unchanged
+                state.touch();
+            }
+            Err(msg)
+        }
+    }
 }
 
 /// Writes a timestamped encrypted backup next to the vault and returns its path.
@@ -564,7 +581,18 @@ fn spawn_auto_lock(app: AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // Only one gnotes at a time: launching it again focuses the open window.
+    // (The vault file is also locked while open; see gnotes-core.)
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }));
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .register_asynchronous_uri_scheme_protocol("gnotes", |ctx, request, responder| {

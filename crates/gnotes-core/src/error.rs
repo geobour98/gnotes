@@ -8,6 +8,8 @@ pub enum Error {
     VaultExists,
     #[error("vault file not found")]
     VaultNotFound,
+    #[error("this vault is already open in another program (another gnotes window?)")]
+    VaultInUse,
     #[error("invalid name: {0}")]
     InvalidName(String),
     #[error("not found: {0}")]

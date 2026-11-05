@@ -803,15 +803,36 @@
       return showInfo("Password not changed", "The two new passwords don't match.");
     }
     try {
-      await flush();
+      await flushAll();
       notify("Changing password…");
       await api.changePassword(cur, next);
-      await showInfo(
-        "Master password changed",
-        "Use the new password from now on. Backups made earlier still open with the old one.",
-      );
     } catch (e) {
+      // Nothing changed; the vault is still unlocked.
       await showInfo("Password not changed", String(e));
+      return;
+    }
+    // The backend has closed the vault. Start over like a fresh launch, so
+    // nothing decrypted stays in this page's memory; the unlock screen then
+    // shows the notice.
+    try {
+      sessionStorage.setItem(NOTICE_KEY, "password-changed");
+    } catch {}
+    location.reload();
+  }
+
+  // A message to show after the page reloads (see settingsPassword).
+  const NOTICE_KEY = "gnotes.notice";
+  function showPendingNotice() {
+    let notice: string | null = null;
+    try {
+      notice = sessionStorage.getItem(NOTICE_KEY);
+      sessionStorage.removeItem(NOTICE_KEY);
+    } catch {}
+    if (notice === "password-changed") {
+      showInfo(
+        "Master password changed",
+        "Unlock with the new password. Backups made earlier still open with the old one.",
+      );
     }
   }
 
@@ -883,6 +904,7 @@
 
   onMount(() => {
     refreshStatus();
+    showPendingNotice();
     restoreZoom().catch(() => {});
     window.addEventListener("wheel", onWheel, { passive: false });
     const unlisten = listen<string>("vault-locked", (e) => {
