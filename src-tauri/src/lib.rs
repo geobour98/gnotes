@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use gnotes_core::attachments::{self, AttachmentMeta};
-use gnotes_core::transfer::{ExportReport, ImportReport, LinkReport};
+use gnotes_core::transfer::{ExportReport, ImportReport, LinkReport, NoteExportReport};
 use gnotes_core::{Note, NoteMeta, SearchResults, TagCount, Tree, Vault};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
@@ -304,6 +304,20 @@ async fn export_markdown(state: State<'_, AppState>, parent: String) -> CmdResul
     state.with_vault(|v| v.export_to_dir(&dest))
 }
 
+/// Exports one note as Markdown (plus its attachments) into `parent`.
+/// NOT encrypted: this is for sharing.
+#[tauri::command]
+async fn export_note_markdown(state: State<'_, AppState>, id: String, parent: String) -> CmdResult<NoteExportReport> {
+    state.with_vault(|v| v.export_note_markdown(&id, &PathBuf::from(parent)))
+}
+
+/// Writes a note rendered by the UI as one self-contained HTML file (images
+/// embedded). NOT encrypted: this is for sharing.
+#[tauri::command]
+async fn export_note_html(state: State<'_, AppState>, html: String, path: String) -> CmdResult<usize> {
+    state.with_vault(|v| v.export_note_html(&html, &PathBuf::from(path)))
+}
+
 /// Imports a folder of Markdown files (Obsidian vault, Joplin export, ...).
 #[tauri::command]
 async fn import_folder(
@@ -552,6 +566,8 @@ pub fn run() {
             change_password,
             backup_now,
             export_markdown,
+            export_note_markdown,
+            export_note_html,
             import_folder,
             link_files_from_folder,
             attachment_add,

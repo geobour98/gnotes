@@ -405,3 +405,46 @@ fn ui_state_is_stored_in_the_vault() {
     let v = Vault::open(&path, "pw").unwrap();
     assert_eq!(v.ui_get("ui.tabs").unwrap().as_deref(), Some(r#"{"ids":["a","b"]}"#));
 }
+
+#[test]
+fn export_single_note() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut v = Vault::create(dir.path().join("v.gnotes"), "pw").unwrap();
+    let out = dir.path().join("out");
+    fs::create_dir(&out).unwrap();
+
+    // No attachments: just <title>.md, never overwriting.
+    let plain = v.create_note("", Some("Plain")).unwrap();
+    v.save_note(&plain.id, "# hi").unwrap();
+    let r = v.export_note_markdown(&plain.id, &out).unwrap();
+    assert!(r.path.ends_with("Plain.md") && r.attachments == 0);
+    let r2 = v.export_note_markdown(&plain.id, &out).unwrap();
+    assert!(r2.path.ends_with("Plain (2).md"));
+    assert_eq!(fs::read_to_string(&r.path).unwrap(), "# hi");
+
+    // With an image: a folder with the note and attachments/.
+    let png = b"\x89PNG\r\n\x1a\nfake";
+    let img = v.add_attachment("shot one.png", None, png).unwrap();
+    let pdf = v.add_attachment("doc.pdf", None, b"%PDF").unwrap();
+    let n = v.create_note("", Some("Report")).unwrap();
+    let body = format!("![s](attachment:{})\n[d](attachment:{})", img.id, pdf.id);
+    v.save_note(&n.id, &body).unwrap();
+    let r = v.export_note_markdown(&n.id, &out).unwrap();
+    assert_eq!(r.attachments, 2);
+    assert!(r.path.ends_with("Report/Report.md"));
+    let md = fs::read_to_string(&r.path).unwrap();
+    assert!(md.contains("](attachments/shot%20one.png)") && md.contains("](attachments/doc.pdf)"));
+    assert_eq!(fs::read(out.join("Report/attachments/shot one.png")).unwrap(), png);
+
+    // HTML: images become data: URLs; non-images and unknown ids are dropped.
+    let html = format!(
+        r#"<img src="attachment:{}"><img src="attachment:{}"><img src="attachment:00000000-0000-0000-0000-000000000000">"#,
+        img.id, pdf.id
+    );
+    let path = out.join("r.html");
+    assert_eq!(v.export_note_html(&html, &path).unwrap(), 1);
+    let written = fs::read_to_string(&path).unwrap();
+    assert!(written.contains(r#"src="data:image/png;base64,iVBORw0KGgpmYWtl""#));
+    assert_eq!(written.matches(r#"src="""#).count(), 2);
+    assert!(!written.contains("attachment:"));
+}

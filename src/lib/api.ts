@@ -28,6 +28,10 @@ export interface ExportReport {
   notes: number;
   attachments: number;
 }
+export interface NoteExportReport {
+  path: string;
+  attachments: number;
+}
 export interface ImportReport {
   folder: string;
   notes: number;
@@ -84,6 +88,9 @@ export const api = {
   backup: () => invoke<string>("backup_now"),
 
   exportMarkdown: (parent: string) => invoke<ExportReport>("export_markdown", { parent }),
+  exportNoteMarkdown: (id: string, parent: string) =>
+    invoke<NoteExportReport>("export_note_markdown", { id, parent }),
+  exportNoteHtml: (html: string, path: string) => invoke<number>("export_note_html", { html, path }),
   importFolder: (path: string, into: string, newFolder: boolean) =>
     invoke<ImportReport>("import_folder", { path, into, newFolder }),
   linkFilesFromFolder: (path: string) => invoke<LinkReport>("link_files_from_folder", { path }),

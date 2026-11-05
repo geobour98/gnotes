@@ -18,6 +18,7 @@
   } from "$lib/api";
   import Unlock from "$lib/Unlock.svelte";
   import { toggleFenceWrap } from "$lib/markdown";
+  import { htmlDocument, printNote, renderedCopy } from "$lib/exportNote";
   import Sidebar from "$lib/Sidebar.svelte";
   import Search from "$lib/Search.svelte";
   import Tags from "$lib/Tags.svelte";
@@ -569,6 +570,55 @@
 
   let menuOpen = $state(false);
   let menuWrap = $state<HTMLDivElement>();
+  let exportOpen = $state(false);
+  let exportWrap = $state<HTMLDivElement>();
+  let printRoot = $state<HTMLDivElement>();
+
+  // ------------------------------------------------------- single-note export
+
+  /** The note as rendered: from the open preview, or rendered off-screen. */
+  async function renderedNote() {
+    await flush();
+    previewSource = draft;
+    await tick();
+    return renderedCopy(mode !== "edit" ? previewRef?.getArticle() : undefined, draft);
+  }
+
+  async function exportNoteHtml() {
+    exportOpen = false;
+    const note = current;
+    if (!note) return;
+    const path = await saveDialog({
+      title: "Export note as HTML",
+      defaultPath: `${note.title}.html`,
+      filters: [{ name: "HTML", extensions: ["html"] }],
+    });
+    if (!path) return;
+    await attempt(async () => {
+      const n = await api.exportNoteHtml(htmlDocument(note.title, await renderedNote()), path);
+      notify(`Exported to ${path}${n ? ` with ${n} image${n === 1 ? "" : "s"} embedded` : ""}`);
+    });
+  }
+
+  async function exportNoteMarkdown() {
+    exportOpen = false;
+    const note = current;
+    if (!note) return;
+    const dir = await openDialog({ directory: true, title: `Export "${note.title}" as Markdown into…` });
+    if (!dir || Array.isArray(dir)) return;
+    await attempt(async () => {
+      await flush();
+      const r = await api.exportNoteMarkdown(note.id, dir);
+      notify(`Exported to ${r.path}${r.attachments ? ` (+${r.attachments} attachment${r.attachments === 1 ? "" : "s"})` : ""}`);
+    });
+  }
+
+  async function printCurrentNote() {
+    exportOpen = false;
+    if (!current || !printRoot) return;
+    const root = printRoot;
+    await attempt(async () => printNote(root, await renderedNote()));
+  }
 
   /** Runs a Vault-menu action after closing the menu. */
   function menuAction(fn: () => unknown) {
@@ -883,12 +933,13 @@
 <svelte:window
   onkeydown={(e) => {
     onActivity();
-    if (e.key === "Escape") menuOpen = false;
+    if (e.key === "Escape") menuOpen = exportOpen = false;
     onKeydown(e);
   }}
   onmousedown={(e) => {
     onActivity();
     if (menuOpen && !menuWrap?.contains(e.target as Node)) menuOpen = false;
+    if (exportOpen && !exportWrap?.contains(e.target as Node)) exportOpen = false;
   }}
 />
 
@@ -978,6 +1029,16 @@
           <span class="spacer"></span>
           <span class="save {saveState}">{saveLabel[saveState]}</span>
           <button class="tool" title="Attach files (or paste / drop them)" onclick={attachPicked}>📎 Attach</button>
+          <div class="export-wrap" bind:this={exportWrap}>
+            <button class="tool" aria-haspopup="menu" aria-expanded={exportOpen} title="Export or print this note" onclick={() => (exportOpen = !exportOpen)}>⇪ Export ▾</button>
+            {#if exportOpen}
+              <div class="menu down" role="menu">
+                <button role="menuitem" onclick={exportNoteHtml}>HTML file (images included)…</button>
+                <button role="menuitem" onclick={exportNoteMarkdown}>Markdown with attachments…</button>
+                <button role="menuitem" onclick={printCurrentNote}>Print / Save as PDF…</button>
+              </div>
+            {/if}
+          </div>
           {#if mode === "split"}
             <button
               class="sync"
@@ -1062,6 +1123,9 @@
 {/if}
 
 {#if toast}<div class="toast" role="status">{toast}</div>{/if}
+
+<!-- Filled only while printing a note (see printNote). -->
+<div class="print-root markdown" bind:this={printRoot}></div>
 
 <style>
   .app {
@@ -1158,6 +1222,15 @@
   }
   .menu button:hover {
     background: var(--hover);
+  }
+  .export-wrap {
+    position: relative;
+  }
+  .menu.down {
+    bottom: auto;
+    top: calc(100% + 0.35rem);
+    left: auto;
+    right: 0;
   }
   .menu hr {
     border: none;

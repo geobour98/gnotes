@@ -230,6 +230,11 @@
     if (r.bottom > window.innerHeight - 8) menuEl.style.top = `${window.innerHeight - r.height - 8}px`;
   });
 
+  /** The rendered note (for export and printing). */
+  export function getArticle(): HTMLElement | undefined {
+    return article;
+  }
+
   function closeMenu(e?: Event) {
     if (menu && !(e?.target instanceof Node && menuEl?.contains(e.target))) menu = null;
   }

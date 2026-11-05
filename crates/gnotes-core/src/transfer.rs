@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::time::UNIX_EPOCH;
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use regex::{Captures, Regex};
 use rusqlite::{Connection, params};
 use serde::Serialize;
@@ -151,38 +153,115 @@ impl Vault {
         for meta in &tree.notes {
             let note = self.get_note(&meta.id)?;
             let depth = if note.folder.is_empty() { 0 } else { note.folder.split('/').count() };
-            let mut body = String::with_capacity(note.body.len());
-            let mut last = 0;
-            for (range, id) in attachments::find_refs(&note.body) {
-                let file = match written.get(id) {
-                    Some(f) => f.clone(),
-                    None => match self.attachment(id) {
-                        Ok((att, data)) => {
-                            let f = unique_file_name(&att.name, &used_names);
-                            let dir = dest.join(EXPORT_ATTACHMENTS_DIR);
-                            fs::create_dir_all(&dir)?;
-                            fs::write(dir.join(&f), data)?;
-                            used_names.insert(f.to_lowercase());
-                            written.insert(id.to_string(), f.clone());
-                            f
-                        }
-                        Err(Error::NotFound(_)) => continue, // dangling reference: leave as is
-                        Err(e) => return Err(e),
-                    },
-                };
-                body.push_str(&note.body[last..range.start]);
-                body.push_str(&"../".repeat(depth));
-                body.push_str(EXPORT_ATTACHMENTS_DIR);
-                body.push('/');
-                body.push_str(&encode_link_path(&file));
-                last = range.end;
-            }
-            body.push_str(&note.body[last..]);
+            let body = self.export_refs(&note.body, &"../".repeat(depth), dest, &mut written, &mut used_names)?;
             let dir = if note.folder.is_empty() { dest.to_path_buf() } else { dest.join(&note.folder) };
             fs::write(dir.join(format!("{}.md", note.title)), body)?;
         }
         Ok(ExportReport { dir: dest.display().to_string(), notes: tree.notes.len(), attachments: written.len() })
     }
+
+    /// Rewrites the `attachment:<id>` references of `body` to
+    /// `<prefix>attachments/<file>`, writing each attachment once into
+    /// `dest/attachments`. Dangling references are left as they are.
+    fn export_refs(
+        &self,
+        body: &str,
+        prefix: &str,
+        dest: &Path,
+        written: &mut HashMap<String, String>,
+        used_names: &mut HashSet<String>,
+    ) -> Result<String> {
+        let mut out = String::with_capacity(body.len());
+        let mut last = 0;
+        for (range, id) in attachments::find_refs(body) {
+            let file = match written.get(id) {
+                Some(f) => f.clone(),
+                None => match self.attachment(id) {
+                    Ok((att, data)) => {
+                        let f = unique_file_name(&att.name, used_names);
+                        let dir = dest.join(EXPORT_ATTACHMENTS_DIR);
+                        fs::create_dir_all(&dir)?;
+                        fs::write(dir.join(&f), data)?;
+                        used_names.insert(f.to_lowercase());
+                        written.insert(id.to_string(), f.clone());
+                        f
+                    }
+                    Err(Error::NotFound(_)) => continue,
+                    Err(e) => return Err(e),
+                },
+            };
+            out.push_str(&body[last..range.start]);
+            out.push_str(prefix);
+            out.push_str(EXPORT_ATTACHMENTS_DIR);
+            out.push('/');
+            out.push_str(&encode_link_path(&file));
+            last = range.end;
+        }
+        out.push_str(&body[last..]);
+        Ok(out)
+    }
+
+    /// Exports one note into `parent`: `<title>.md`, or, when it has
+    /// attachments, a `<title>/` folder with `<title>.md` and `attachments/`.
+    /// Existing files are never overwritten (" (2)" is appended instead).
+    pub fn export_note_markdown(&self, id: &str, parent: &Path) -> Result<NoteExportReport> {
+        let note = self.get_note(id)?;
+        let has_files = attachments::find_refs(&note.body).iter().any(|(_, id)| self.attachment_meta(id).is_ok());
+        if !has_files {
+            let path = unique_path(parent, &note.title, ".md");
+            fs::write(&path, &note.body)?;
+            return Ok(NoteExportReport { path: path.display().to_string(), attachments: 0 });
+        }
+        let dir = unique_path(parent, &note.title, "");
+        fs::create_dir_all(&dir)?;
+        let (mut written, mut used) = (HashMap::new(), HashSet::new());
+        let body = self.export_refs(&note.body, "", &dir, &mut written, &mut used)?;
+        let path = dir.join(format!("{}.md", note.title));
+        fs::write(&path, body)?;
+        Ok(NoteExportReport { path: path.display().to_string(), attachments: written.len() })
+    }
+
+    /// Writes a rendered note (a complete HTML document made by the UI) to
+    /// `path`, embedding every `src="attachment:<id>"` image as a data: URL
+    /// so the file is self-contained. Returns the number of embedded images.
+    pub fn export_note_html(&self, html: &str, path: &Path) -> Result<usize> {
+        static IMG_SRC: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(r#"src="attachment:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})""#).unwrap()
+        });
+        let mut embedded = 0;
+        let mut err = None;
+        let out = IMG_SRC.replace_all(html, |c: &Captures| match self.attachment(&c[1]) {
+            Ok((meta, data)) if meta.mime.starts_with("image/") => {
+                embedded += 1;
+                format!(r#"src="data:{};base64,{}""#, meta.mime, BASE64.encode(data))
+            }
+            Ok(_) | Err(Error::NotFound(_)) => r#"src="""#.to_string(),
+            Err(e) => {
+                err.get_or_insert(e);
+                String::new()
+            }
+        });
+        if let Some(e) = err {
+            return Err(e);
+        }
+        fs::write(path, out.as_bytes())?;
+        Ok(embedded)
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct NoteExportReport {
+    /// The written .md file.
+    pub path: String,
+    pub attachments: usize,
+}
+
+/// `parent/<stem><ext>`, or `parent/<stem> (2)<ext>`, ... if that exists.
+fn unique_path(parent: &Path, stem: &str, ext: &str) -> PathBuf {
+    (1..)
+        .map(|i| if i == 1 { parent.join(format!("{stem}{ext}")) } else { parent.join(format!("{stem} ({i}){ext}")) })
+        .find(|p| !p.exists())
+        .unwrap()
 }
 
 /// Case-insensitively unique file name: `a.png`, `a (2).png`, ...

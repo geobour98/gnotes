@@ -409,3 +409,68 @@ button.link:hover {
 .markdown .tag:hover {
   background: color-mix(in srgb, var(--accent) 24%, transparent);
 }
+
+/* ---------------------------------------------------------------- print */
+
+.print-root {
+  display: none;
+}
+@media print {
+  /* Paper is white: always print with the light theme. */
+  :root {
+    color-scheme: light;
+    --bg: #ffffff;
+    --bg-side: #f3f1ed;
+    --bg-elev: #ffffff;
+    --fg: #23211f;
+    --muted: #76716a;
+    --border: #e3dfd8;
+    --hover: #ebe8e2;
+    --selection: #dfe6f7;
+    --accent: #4a6bd6;
+    --danger: #c4413a;
+    --heading: #1b1a18;
+    --code: #a3426e;
+    --code-bg: #f2efea;
+    --syn-keyword: #8a3fb8;
+    --syn-string: #3c7a3a;
+    --syn-number: #b5590b;
+    --syn-fn: #2f62b3;
+  }
+  html,
+  body {
+    height: auto;
+    overflow: visible;
+  }
+  /* Only the note: hide the app (and anything else on the page). */
+  body * {
+    visibility: hidden;
+  }
+  .print-root,
+  .print-root * {
+    visibility: visible;
+  }
+  .app,
+  .toast {
+    display: none !important;
+  }
+  .print-root {
+    display: block;
+    position: absolute;
+    inset: 0 0 auto 0;
+    max-width: none;
+    padding: 0;
+  }
+  .print-root pre,
+  .print-root img,
+  .print-root table,
+  .print-root blockquote,
+  .print-root div.mermaid {
+    break-inside: avoid;
+  }
+  .print-root h1,
+  .print-root h2,
+  .print-root h3 {
+    break-after: avoid;
+  }
+}
