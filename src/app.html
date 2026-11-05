@@ -4,6 +4,9 @@
     <meta charset="utf-8" />
     <link rel="icon" href="%sveltekit.assets%/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Don't pre-resolve domain names of links in notes (no DNS lookups
+         until a link is actually clicked). -->
+    <meta http-equiv="x-dns-prefetch-control" content="off" />
     <title>gnotes</title>
     %sveltekit.head%
   </head>
