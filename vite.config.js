@@ -4,9 +4,29 @@ import { sveltekit } from "@sveltejs/kit/vite";
 import process from "node:process";
 const host = process.env.TAURI_DEV_HOST;
 
+// Dev only: never answer "304 Not Modified". After a dev-server restart the
+// webview would otherwise reuse cached component JS without the server
+// compiling it, and the component's CSS then fails to load ("failed to load
+// virtual css module"), leaving the app unstyled.
+/** @type {import("vite").Plugin} */
+const noDevCache = {
+  name: "gnotes-no-dev-cache",
+  apply: "serve",
+  configureServer(server) {
+    server.middlewares.use((req, res, next) => {
+      // (typed loosely: this project has no @types/node)
+      const headers = /** @type {any} */ (req).headers;
+      delete headers["if-none-match"];
+      delete headers["if-modified-since"];
+      res.setHeader("Cache-Control", "no-store");
+      next();
+    });
+  },
+};
+
 // https://vite.dev/config/
 export default defineConfig(() => ({
-  plugins: [sveltekit()],
+  plugins: [noDevCache, sveltekit()],
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

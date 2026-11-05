@@ -840,7 +840,11 @@
   .app {
     display: grid;
     grid-template-columns: 17rem 1fr;
+    /* One row exactly the window's height: long sidebar content (notes,
+       tags) must scroll inside its panel, never stretch the page. */
+    grid-template-rows: minmax(0, 1fr);
     height: 100vh;
+    overflow: hidden;
   }
   aside {
     display: flex;
@@ -850,7 +854,8 @@
     border-right: 1px solid var(--border);
   }
   aside > :global(.sidebar) {
-    flex: 1;
+    flex: 1 1 0;
+    min-height: 0;
   }
   .side-head,
   .note-head {
