@@ -30,7 +30,35 @@ if [[ "${1:-}" == "--uninstall" ]]; then
   exit 0
 fi
 
+# Fails early, with the right install command, if build tools are missing.
+check_deps() {
+  local missing=()
+  command -v cargo >/dev/null || missing+=("Rust (cargo)")
+  command -v npm >/dev/null || missing+=("Node.js (npm)")
+  command -v pkg-config >/dev/null || missing+=("pkg-config")
+  if command -v pkg-config >/dev/null && ! pkg-config --exists webkit2gtk-4.1; then
+    missing+=("WebKitGTK 4.1")
+  fi
+  ((${#missing[@]} == 0)) && return 0
+  echo "Missing build dependencies: ${missing[*]}" >&2
+  echo "Install them with:" >&2
+  if command -v pacman >/dev/null; then
+    echo "  sudo pacman -S --needed webkit2gtk-4.1 base-devel curl wget file openssl librsvg xdotool nodejs npm rustup" >&2
+    echo "  rustup default stable   # if Rust was just installed" >&2
+  elif command -v apt >/dev/null; then
+    echo "  sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev librsvg2-dev nodejs npm" >&2
+    echo "  and Rust from https://rustup.rs" >&2
+  elif command -v dnf >/dev/null; then
+    echo "  sudo dnf install webkit2gtk4.1-devel openssl-devel curl wget file libxdo-devel librsvg2-devel nodejs npm" >&2
+    echo "  sudo dnf group install development-tools   # and Rust from https://rustup.rs" >&2
+  else
+    echo "  WebKitGTK 4.1 development files, a C toolchain, Node.js and Rust" >&2
+  fi
+  exit 1
+}
+
 if [[ "${1:-}" != "--no-build" ]]; then
+  check_deps
   [[ -d node_modules ]] || npm install --no-audit --no-fund
   npm run tauri build -- --no-bundle
 fi

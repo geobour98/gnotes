@@ -61,10 +61,15 @@ anchors, raw HTML (sanitized).
 
 ## Develop
 
-Linux prerequisites (Debian/Ubuntu):
+Linux prerequisites (plus Node.js and Rust):
 
+    # Arch
+    sudo pacman -S --needed webkit2gtk-4.1 base-devel curl wget file openssl librsvg xdotool
+    # Debian/Ubuntu
     sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
       libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+    # Fedora
+    sudo dnf install webkit2gtk4.1-devel openssl-devel curl wget file libxdo-devel librsvg2-devel
 
 Then:
 
@@ -85,7 +90,7 @@ cross-compiled.
 
 ## Shortcuts
 
-Ctrl+N new note · Ctrl+E cycle edit/split/preview · Ctrl+S save now ·
+Ctrl+N new note · Ctrl+Shift+F search (`#tag` for tags) · Ctrl+E cycle edit/split/preview · Ctrl+S save now ·
 Ctrl+Shift+S toggle scroll sync (split view) · Ctrl+L lock ·
 Ctrl + / Ctrl − / Ctrl+0 and Ctrl+wheel zoom
 
@@ -93,5 +98,5 @@ Ctrl + / Ctrl − / Ctrl+0 and Ctrl+wheel zoom
 
 1. ~~Core: encrypted vault, unlock, folders, editor + preview, backups~~
 2. ~~Images/attachments, math (KaTeX), Mermaid, export/import plain .md folder~~
-3. Tags, full-text search, `[[wikilinks]]` + backlinks
+3. ~~Full-text search, tags~~ (`[[wikilinks]]`/backlinks: not planned for now)
 4. Read-later: save a URL → clean Markdown with images stored offline
