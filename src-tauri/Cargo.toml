@@ -26,4 +26,9 @@ gnotes-core = { version = "0.1.0", path = "../crates/gnotes-core" }
 zeroize = "1.9.1"
 tauri-plugin-dialog = "2"
 
+# Screen-lock / sleep notifications from logind (local D-Bus). Already a
+# dependency of tauri-plugin-opener, so this adds no new crates.
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = "5"
+
 

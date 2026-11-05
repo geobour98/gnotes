@@ -1,6 +1,9 @@
 //! gnotes desktop app: exposes the encrypted vault to the UI through a small,
 //! explicit set of commands. The UI never touches the filesystem directly.
 
+#[cfg(target_os = "linux")]
+mod session_lock;
+
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -21,11 +24,13 @@ type CmdResult<T> = Result<T, String>;
 struct Config {
     last_vault: Option<String>,
     auto_lock_minutes: u64,
+    /// Lock when the screen locks or the system sleeps.
+    lock_on_screen_lock: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { last_vault: None, auto_lock_minutes: 10 }
+        Config { last_vault: None, auto_lock_minutes: 10, lock_on_screen_lock: true }
     }
 }
 
@@ -107,6 +112,7 @@ struct Status {
     vault_path: String,
     vault_exists: bool,
     auto_lock_minutes: u64,
+    lock_on_screen_lock: bool,
 }
 
 #[tauri::command]
@@ -128,6 +134,7 @@ fn vault_status(app: AppHandle, state: State<'_, AppState>) -> CmdResult<Status>
         vault_exists: PathBuf::from(&vault_path).exists(),
         vault_path,
         auto_lock_minutes: cfg.auto_lock_minutes,
+        lock_on_screen_lock: cfg.lock_on_screen_lock,
     })
 }
 
@@ -244,6 +251,16 @@ fn set_auto_lock(app: AppHandle, state: State<'_, AppState>, minutes: u64) -> Cm
     let cfg = {
         let mut cfg = state.config.lock().unwrap();
         cfg.auto_lock_minutes = minutes.min(24 * 60);
+        cfg.clone()
+    };
+    save_config(&app, &cfg)
+}
+
+#[tauri::command]
+fn set_lock_on_screen_lock(app: AppHandle, state: State<'_, AppState>, enabled: bool) -> CmdResult<()> {
+    let cfg = {
+        let mut cfg = state.config.lock().unwrap();
+        cfg.lock_on_screen_lock = enabled;
         cfg.clone()
     };
     save_config(&app, &cfg)
@@ -475,7 +492,7 @@ fn spawn_auto_lock(app: AppHandle) {
             let idle = state.last_activity.lock().unwrap().elapsed();
             if idle >= Duration::from_secs(minutes * 60) {
                 if state.lock_vault() {
-                    let _ = app.emit("vault-locked", ());
+                    let _ = app.emit("vault-locked", "inactivity");
                 }
             }
         }
@@ -503,6 +520,8 @@ pub fn run() {
                 close_acked: AtomicBool::new(false),
             });
             spawn_auto_lock(app.handle().clone());
+            #[cfg(target_os = "linux")]
+            session_lock::spawn(app.handle().clone());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -519,6 +538,7 @@ pub fn run() {
             app_quit,
             activity,
             set_auto_lock,
+            set_lock_on_screen_lock,
             change_password,
             backup_now,
             export_markdown,

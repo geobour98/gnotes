@@ -66,6 +66,7 @@ export interface Status {
   vault_path: string;
   vault_exists: boolean;
   auto_lock_minutes: number;
+  lock_on_screen_lock: boolean;
 }
 
 export const api = {
@@ -77,6 +78,7 @@ export const api = {
   quit: () => invoke<void>("app_quit"),
   activity: () => invoke<void>("activity"),
   setAutoLock: (minutes: number) => invoke<void>("set_auto_lock", { minutes }),
+  setLockOnScreenLock: (enabled: boolean) => invoke<void>("set_lock_on_screen_lock", { enabled }),
   changePassword: (current: string, next: string) =>
     invoke<void>("change_password", { current, new: next }),
   backup: () => invoke<string>("backup_now"),

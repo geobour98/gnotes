@@ -552,6 +552,34 @@
     refreshStatus();
   }
 
+  const LOCK_REASONS: Record<string, string> = {
+    inactivity: "Vault locked after inactivity",
+    screen: "Vault locked because the screen locked",
+    sleep: "Vault locked before sleep",
+  };
+
+  /** Screen lock / sleep: save pending edits, then lock (the backend locks
+   *  on its own if this takes too long). */
+  async function onLockRequested(reason: string) {
+    try {
+      await flushAll();
+    } catch {}
+    try {
+      await api.lock();
+    } catch {}
+    onLocked();
+    notify(LOCK_REASONS[reason] ?? "Vault locked");
+  }
+
+  async function toggleLockOnScreenLock() {
+    const enabled = !status?.lock_on_screen_lock;
+    await attempt(async () => {
+      await api.setLockOnScreenLock(enabled);
+      await refreshStatus();
+      notify(enabled ? "Will lock when the screen locks or the computer sleeps" : "Screen-lock locking disabled");
+    });
+  }
+
   async function settingsAutoLock() {
     const input = await ask("Auto-lock after N minutes of inactivity (0 = never)", String(status?.auto_lock_minutes ?? 10), "Save");
     if (input === null) return;
@@ -635,9 +663,12 @@
     refreshStatus();
     restoreZoom().catch(() => {});
     window.addEventListener("wheel", onWheel, { passive: false });
-    const unlisten = listen("vault-locked", () => {
+    const unlisten = listen<string>("vault-locked", (e) => {
       onLocked();
-      notify("Vault locked after inactivity");
+      notify(LOCK_REASONS[e.payload] ?? "Vault locked");
+    });
+    const unlistenLockReq = listen<string>("lock-requested", (e) => {
+      if (status?.unlocked) onLockRequested(e.payload);
     });
     const unlistenDrop = getCurrentWebview().onDragDropEvent((e) => {
       if (e.payload.type === "drop") attachDropped(e.payload.paths);
@@ -649,6 +680,7 @@
     window.addEventListener("blur", onBlur);
     return () => {
       unlisten.then((f) => f());
+      unlistenLockReq.then((f) => f());
       unlistenClose.then((f) => f());
       unlistenDrop.then((f) => f());
       window.removeEventListener("blur", onBlur);
@@ -724,6 +756,12 @@
               <hr />
               <button role="menuitem" onclick={() => menuAction(backup)}>Backup now</button>
               <button role="menuitem" onclick={() => menuAction(settingsAutoLock)}>Auto-lock…</button>
+              <button
+                role="menuitemcheckbox"
+                aria-checked={status?.lock_on_screen_lock ?? true}
+                onclick={() => menuAction(toggleLockOnScreenLock)}
+                >{status?.lock_on_screen_lock ? "✓" : "  "} Lock on screen lock / sleep</button
+              >
               <button role="menuitem" onclick={() => menuAction(settingsPassword)}>Change password…</button>
             </div>
           {/if}
